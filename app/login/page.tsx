@@ -141,16 +141,16 @@ export default function LoginPage() {
             <rect x="21" y="21" width="8" height="8" rx="2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"/>
           </svg>
           <div className="left-logo-text">
-            <span>Estudio Contable</span>
-            <span>Ábaco</span>
+            <span>Servicio de Contabilidad</span>
+            <span>IGLESIA EN MONTERÍA</span>
           </div>
         </div>
         <div className="left-content">
           <div className="left-tag">Acceso seguro</div>
-          <h2 className="left-title">Gestiona tus finanzas con confianza.</h2>
-          <p className="left-subtitle">Accede a tu panel contable y mantén el control de tus ingresos, egresos y reportes en un solo lugar.</p>
+          <h2 className="left-title">Gestiona las finanzas con confianza.</h2>
+          <p className="left-subtitle">Accede a tu panel contable y mantén el control de los ingresos, egresos y reportes en un solo lugar.</p>
         </div>
-        <div className="left-footer">© 2025 Estudio Contable Ábaco</div>
+        <div className="left-footer">© 2026 sebastian nunez protuctions</div>
       </div>
 
       <div className="login-right">

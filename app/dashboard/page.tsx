@@ -48,7 +48,6 @@ const menuItems = [
     ),
     sub: [
       { label: 'Listado de miembros', href: '/dashboard/miembros' },
-      { label: 'Agregar miembro',     href: '/dashboard/miembros/agregar' },
     ],
   },
 ]
@@ -227,8 +226,8 @@ export default function DashboardPage() {
               <rect x="21" y="21" width="8" height="8" rx="2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"/>
             </svg>
             <div className="header-logo-text">
-              <span>Estudio Contable</span>
-              <span>Ábaco</span>
+              <span>Servicio de Contabilidad</span>
+              <span>IGLESIA EN MONTERÍA</span>
             </div>
           </div>
         </div>
