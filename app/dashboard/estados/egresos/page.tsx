@@ -396,6 +396,8 @@ export default function EstadoEgresosPage() {
         .spinner{width:30px;height:30px;border:3px solid #FBBCBC;border-top-color:#C0392B;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
         @keyframes spin{to{transform:rotate(360deg)}}
         .err{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;margin:16px 24px}
+        .td-desc{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
+        .td-desc:hover{overflow:visible;white-space:normal;background:#fff;position:relative;z-index:10}
 
         @media(max-width:768px){.content{padding:16px 12px}.top-bar{padding:0 16px}}
       `}</style>
@@ -479,7 +481,7 @@ export default function EstadoEgresosPage() {
                           <td className="cc">{f.aux}</td>
                           <td className="cl">{f.nombre}</td>
                           <td className="cc">{f.ccNit}</td>
-                          <td className="cc" style={{maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.descripcion}</td>
+                          <td className="cc td-desc">{f.descripcion}</td>
                           <td className={`cr ${f.esPrincipal ? 'val-ppal' : ''}`}>${fmt(f.valor)}</td>
                           <td className={`cc ${f.e === 'CR' ? 'ecr' : ''}`}>{f.e}</td>
                         </tr>

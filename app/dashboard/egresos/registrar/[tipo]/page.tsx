@@ -52,7 +52,7 @@ interface TipoConfig {
 const CONFIGS: Record<string, TipoConfig> = {
   'energia': {
     label: 'Energía',
-    pagadoA: 'AFINIA',
+    pagadoA: 'AFINIA GRUPO EPM (CARIBEMAR DE LA COSTA)',
     conceptos: ['FACTURA DE ENERGIA CORRESPONDIENTE AL MES DE'],
     cuentas: [
       { codigo: '5135-30', cuenta: 'ENERGIA',      debito: 0, credito: 0 },
@@ -72,7 +72,7 @@ const CONFIGS: Record<string, TipoConfig> = {
   },
   'gas': {
     label: 'Gas',
-    pagadoA: 'SURTIGAS',
+    pagadoA: 'SURTIGAS S.A.E.S.P.',
     conceptos: ['PAGO FACTURA SERVICIO DE GAS CORRESPONDIENTE AL MES DE'],
     cuentas: [
       { codigo: '51-35-55', cuenta: 'GAS',          debito: 0, credito: 0 },
@@ -104,7 +104,7 @@ const CONFIGS: Record<string, TipoConfig> = {
   },
   'obrero-local': {
     label: 'Obrero Local',
-    pagadoA: '',
+    pagadoA: 'LUIS GABRIEL ALVAREZ MARQUEZ',
     conceptos: [
       'PAGO OFRENDA OBRERO LOCAL',
       'PAGO MENSUAL OBRERO LOCAL MES DE',
@@ -113,22 +113,32 @@ const CONFIGS: Record<string, TipoConfig> = {
       { codigo: '',         cuenta: '',             debito: 0, credito: 0 },
       { codigo: '1105-05',  cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
     ],
-    docTipo: 'CC', docNumero: '',
+    docTipo: 'CC', docNumero: '85.203.032',
   },
   'diezmo-diezmo': {
     label: 'Diezmo de Diezmo',
-    pagadoA: 'IGLESIA EN BOGOTÁ',
-    conceptos: ['DIEZMO DE DIEZMO'],
+    pagadoA: 'IGLESIA EN EL DISTRITO CAPITAL',
+    conceptos: ['CONSIGNACION OFRENDA VOTO DIEZMO DE DIEZMO CORRESPONDIENTE A'],
     cuentas: [
       { codigo: '5125-08', cuenta: 'OTRAS CONTRIBUCIONES', debito: 0, credito: 0 },
       { codigo: '1105-05', cuenta: 'CAJA GENERAL',         debito: 0, credito: 0 },
     ],
-    docTipo: 'NIT', docNumero: '',
+    docTipo: 'NIT', docNumero: '900.299.699-6',
+  },
+  'internet': {
+    label: 'Internet',
+    pagadoA: 'COLOMBIA TELECOMUNICACIONES S.A. E.S.P.',
+    conceptos: ['PAGO FACTURA SERVICIO DE INTERNET CORRESPONDIENTE AL MES DE'],
+    cuentas: [
+      { codigo: '5135-35', cuenta: 'INTERNET', debito: 0, credito: 0 },
+      { codigo: '1105-05', cuenta: 'CAJA GENERAL',         debito: 0, credito: 0 },
+    ],
+    docTipo: 'NIT', docNumero: '830.122.566-1',
   },
   'otro': {
     label: 'Otro',
     pagadoA: '',
-    conceptos: [],
+    conceptos: ['PAGO'],
     cuentas: [
       { codigo: '', cuenta: '', debito: 0, credito: 0 },
       { codigo: '', cuenta: '', debito: 0, credito: 0 },

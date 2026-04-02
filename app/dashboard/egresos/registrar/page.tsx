@@ -10,6 +10,7 @@ const TIPOS = [
   { id: 'dian',          label: 'DIAN',             logo: '/logos/dian.png'           },
   { id: 'obrero-local',  label: 'Obrero Local',     logo: '/logos/obrero-local.png'   },
   { id: 'diezmo-diezmo', label: 'Diezmo de Diezmo', logo: '/logos/diezmo-diezmo.png' },
+  { id: 'internet',      label: 'Internet',         logo: '/logos/internet.png'       },
   { id: 'otro',          label: 'Otro',             logo: '/logos/otro.png'           },
 ]
 
