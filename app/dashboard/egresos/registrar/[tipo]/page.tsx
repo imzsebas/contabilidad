@@ -85,9 +85,9 @@ const CONFIGS: Record<string, TipoConfig> = {
     pagadoA: 'EN CASA FINCA RAIZ',
     conceptos: ['PAGO CANON DE ARRIENDO'],
     cuentas: [
-      { codigo: '51-20-10', cuenta: 'ARRIENDO',         debito: 0, credito: 0 },
+      { codigo: '5120-10', cuenta: 'ARRIENDO',         debito: 0, credito: 0 },
       { codigo: '2365-30',  cuenta: 'ARRIENDO RTE FTE', debito: 0, credito: 0 },
-      { codigo: '53-05-20',    cuenta: 'INTERESES MORA',   debito: 0, credito: 0 },
+      { codigo: '5305-20',    cuenta: 'INTERESES MORA',   debito: 0, credito: 0 },
       { codigo: '1105-05',  cuenta: 'CAJA GENERAL',     debito: 0, credito: 0 },
     ],
     docTipo: 'NIT', docNumero: '900.512.838-7',
