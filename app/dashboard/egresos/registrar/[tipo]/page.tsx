@@ -75,7 +75,7 @@ const CONFIGS: Record<string, TipoConfig> = {
     pagadoA: 'SURTIGAS S.A.E.S.P.',
     conceptos: ['PAGO FACTURA SERVICIO DE GAS CORRESPONDIENTE AL MES DE'],
     cuentas: [
-      { codigo: '51-35-55', cuenta: 'GAS',          debito: 0, credito: 0 },
+      { codigo: '5135-55', cuenta: 'GAS',          debito: 0, credito: 0 },
       { codigo: '1105-05',  cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
     ],
     docTipo: 'NIT', docNumero: '890.400.869-9',

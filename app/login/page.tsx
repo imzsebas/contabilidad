@@ -134,12 +134,11 @@ export default function LoginPage() {
 
       <div className="login-left">
         <div className="left-logo">
-          <svg width="38" height="38" viewBox="0 0 38 38" fill="none">
-            <rect x="4" y="4" width="30" height="30" rx="6" stroke="rgba(255,255,255,0.6)" strokeWidth="2.2"/>
-            <path d="M12 19h14M19 12v14" stroke="rgba(255,255,255,0.6)" strokeWidth="2.2" strokeLinecap="round"/>
-            <rect x="9" y="9" width="8" height="8" rx="2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"/>
-            <rect x="21" y="21" width="8" height="8" rx="2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5"/>
-          </svg>
+          <img
+            src="/logos/logoblanco.png"
+            alt="Logo"
+            style={{ height: '40px', width: 'auto', objectFit: 'contain' }}
+          />
           <div className="left-logo-text">
             <span>Servicio de Contabilidad</span>
             <span>IGLESIA EN MONTERÍA</span>

@@ -260,48 +260,47 @@ export default function Home() {
       `}</style>
 
       <nav>
-        <svg width="38" height="38" viewBox="0 0 38 38" fill="none">
-          <rect x="4" y="4" width="30" height="30" rx="6" stroke="#2B5BBF" strokeWidth="2.2"/>
-          <path d="M12 19h14M19 12v14" stroke="#2B5BBF" strokeWidth="2.2" strokeLinecap="round"/>
-          <rect x="9" y="9" width="8" height="8" rx="2" fill="#DDEAFF" stroke="#2B5BBF" strokeWidth="1.5"/>
-          <rect x="21" y="21" width="8" height="8" rx="2" fill="#DDEAFF" stroke="#2B5BBF" strokeWidth="1.5"/>
-        </svg>
+        <img
+          src="/logos/logo.png"
+          alt="Logo"
+          style={{ height: '40px', width: '40px', objectFit: 'contain' }}
+        />
         <div className="logo-text">
-          <span>Estudio Contable</span>
-          <span>Ábaco</span>
+          <span>Servicio de Contabilidad</span>
+          <span>IGLESIA EN MONTERÍA</span>
         </div>
       </nav>
 
       <section className="hero">
         <div className="hero-left">
-          <div className="hero-tag">Gestión contable profesional</div>
+          <div className="hero-tag">Gestión contable</div>
           <h1>
-            Obtén la tranquilidad de saber que tus impuestos son manejados por <em>expertos.</em>
+            Maneja las cuentas de forma <em>Segura</em> y <em>Eficiente</em>
           </h1>
           <a href="/login" className="btn-login">
             Iniciar Sesión
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M3 8h10M9 4l4 4-4 4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M3 8h10M9 4l4 4-4 4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </a>
         </div>
 
         <div className="chart-wrap">
           <div className="badge">
-            <span className="badge-dot"/>
+            <span className="badge-dot" />
             Sistema activo
           </div>
           <div className="chart-card">
             <div className="chart-header">
               <div>
                 <div className="chart-title">Rendimiento financiero</div>
-                <div className="chart-subtitle">Últimos 8 meses</div>
+                <div className="chart-subtitle">Detalles</div>
               </div>
               <div className="chart-value">
                 +38% <span>↑</span>
               </div>
             </div>
-            <canvas ref={canvasRef} width={344} height={160}/>
+            <canvas ref={canvasRef} width={344} height={160} />
             <div className="chart-footer">
               <span>Ene</span><span>Feb</span><span>Mar</span>
               <span>Abr</span><span>May</span><span>Jun</span>
