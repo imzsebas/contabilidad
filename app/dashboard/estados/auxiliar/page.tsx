@@ -36,6 +36,14 @@ export default function LibroAuxiliarPage() {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
 
+  // ── Saldo inicial personalizado ───────────────────────────────────────────
+  const [saldoInicialCustom, setSaldoInicialCustom] = useState<number | null>(null)
+  const [showModalSaldo,     setShowModalSaldo]     = useState(false)
+  const [modalPass,          setModalPass]          = useState('')
+  const [modalMonto,         setModalMonto]         = useState('')
+  const [modalError,         setModalError]         = useState('')
+  const PASS_SALDO = 'Ctbd123'
+
   // ── Cargar años disponibles (unión de ingresos y egresos) ─────────────────
   useEffect(() => {
     Promise.all([
@@ -162,6 +170,11 @@ export default function LibroAuxiliarPage() {
         saldoAnterior -= (debMapAntes[r.id] ?? r.valor ?? 0)
       })
 
+      // Si es enero y hay un saldo inicial personalizado, sumarlo
+      if (mesNum === 1 && saldoInicialCustom !== null) {
+        saldoAnterior += saldoInicialCustom
+      }
+
       // 5. Calcular saldo acumulado partiendo del saldo anterior
       let saldoAcum = saldoAnterior
       const filasResult: FilaAuxiliar[] = []
@@ -195,7 +208,7 @@ export default function LibroAuxiliarPage() {
     } finally {
       setLoading(false)
     }
-  }, [añoSel, mesSel])
+  }, [añoSel, mesSel, saldoInicialCustom])
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
 
@@ -540,10 +553,75 @@ export default function LibroAuxiliarPage() {
                 </div>
               )}
             </div>
-            <button className="btn-excel" onClick={exportarExcel} disabled={loading || filas.length === 0}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              Exportar Excel
-            </button>
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <button className="btn-excel" onClick={() => { setModalPass(''); setModalMonto(saldoInicialCustom !== null ? String(saldoInicialCustom) : ''); setModalError(''); setShowModalSaldo(true) }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                {saldoInicialCustom !== null ? `Saldo inicial: $${fmt(saldoInicialCustom)}` : 'Ajustar saldo inicial'}
+              </button>
+              <button className="btn-excel" onClick={exportarExcel} disabled={loading || filas.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                Exportar Excel
+              </button>
+            </div>
+
+            {/* Modal saldo inicial */}
+            {showModalSaldo && (
+              <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center'}}
+                   onClick={e => { if (e.target === e.currentTarget) setShowModalSaldo(false) }}>
+                <div style={{background:'#fff',borderRadius:16,padding:'32px 28px',width:340,boxShadow:'0 8px 40px rgba(26,58,143,.18)'}}>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:'#0F2560',fontWeight:700,marginBottom:4}}>Ajustar saldo inicial</div>
+                  <div style={{fontSize:12,color:'#8A9CC0',marginBottom:20}}>Ingresa la contraseña y el monto de apertura</div>
+
+                  <label style={{fontSize:11,fontWeight:600,color:'#4A6090',letterSpacing:'.05em'}}>CONTRASEÑA</label>
+                  <input
+                    type="password"
+                    value={modalPass}
+                    onChange={e => setModalPass(e.target.value)}
+                    placeholder="••••••••"
+                    style={{width:'100%',marginTop:4,marginBottom:14,padding:'9px 12px',borderRadius:8,border:'1.5px solid #D8E4F8',fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:'none'}}
+                  />
+
+                  <label style={{fontSize:11,fontWeight:600,color:'#4A6090',letterSpacing:'.05em'}}>SALDO INICIAL ($)</label>
+                  <input
+                    type="number"
+                    value={modalMonto}
+                    onChange={e => setModalMonto(e.target.value)}
+                    placeholder="0"
+                    style={{width:'100%',marginTop:4,marginBottom:6,padding:'9px 12px',borderRadius:8,border:'1.5px solid #D8E4F8',fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:'none'}}
+                  />
+
+                  {modalError && <div style={{color:'#C0392B',fontSize:12,marginBottom:10}}>{modalError}</div>}
+
+                  <div style={{display:'flex',gap:8,marginTop:12}}>
+                    <button onClick={() => setShowModalSaldo(false)}
+                      style={{flex:1,padding:'9px 0',borderRadius:9,border:'1.5px solid #D8E4F8',background:'#EEF4FF',color:'#1A3A8F',fontSize:13,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      Cancelar
+                    </button>
+                    <button onClick={() => {
+                      if (modalPass !== PASS_SALDO) { setModalError('Contraseña incorrecta'); return }
+                      const n = parseFloat(modalMonto)
+                      if (isNaN(n)) { setModalError('Ingresa un monto válido'); return }
+                      setSaldoInicialCustom(n)
+                      setShowModalSaldo(false)
+                    }}
+                      style={{flex:1,padding:'9px 0',borderRadius:9,border:'none',background:'#1A3A8F',color:'#fff',fontSize:13,cursor:'pointer',fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>
+                      Guardar
+                    </button>
+                  </div>
+
+                  {saldoInicialCustom !== null && (
+                    <button onClick={() => {
+                      if (modalPass !== PASS_SALDO) { setModalError('Contraseña incorrecta'); return }
+                      setSaldoInicialCustom(null)
+                      setShowModalSaldo(false)
+                    }}
+                      style={{width:'100%',marginTop:10,padding:'8px 0',borderRadius:9,border:'1.5px solid #FBBCBC',background:'#FEE8E8',color:'#C0392B',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      Quitar saldo inicial personalizado
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {error && <div className="err">{error}</div>}
