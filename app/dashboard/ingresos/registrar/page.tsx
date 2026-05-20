@@ -59,7 +59,7 @@ const DEFAULT_COLS: Column[] = [
 function defaultDist(): DistItem[] {
   return [
     { id: uid(), concepto: 'Diezmo de Diezmo',           porcentaje: 'especial', esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
-    { id: uid(), concepto: 'Ofrenda Hno. Julio Sánchez',  porcentaje: 5,          esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
+    { id: uid(), concepto: 'Cuidado Hno. Julio Sánchez',  porcentaje: 10,          esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
     { id: uid(), concepto: 'Ofrenda Obrero (Luis Álvarez)',porcentaje: 10,         esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
     { id: uid(), concepto: 'Necesidades diversas',        porcentaje: 10,         esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
   ]
