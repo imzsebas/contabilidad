@@ -50,18 +50,28 @@ const TIPOS_LABEL: Record<string, string> = {
   'otro': 'Otro',
 }
 
+interface CuentaPUC {
+  codigo: string
+  cuenta: string
+  debito: number
+  credito: number
+}
+
 interface Egreso {
   id: number
   fecha: string
   numero: number
+  ciudad: string
   pagado_a: string
   concepto: string
   valor: number
+  en_letras: string
   tipo: string
   efectivo: boolean
   doc_tipo: string
   doc_numero: string
   elaborado_por: string
+  cuentas?: CuentaPUC[]
 }
 
 export default function InformeEgresos() {
@@ -93,7 +103,7 @@ export default function InformeEgresos() {
 
       let query = supabase
         .from('expense_records')
-        .select('id, fecha, numero, pagado_a, concepto, valor, tipo, efectivo, doc_tipo, doc_numero, elaborado_por')
+        .select('id, fecha, numero, ciudad, pagado_a, concepto, valor, en_letras, tipo, efectivo, doc_tipo, doc_numero, elaborado_por')
         .gte('fecha', desde)
         .lte('fecha', hasta)
         .order('fecha', { ascending: true })
@@ -103,7 +113,25 @@ export default function InformeEgresos() {
       }
 
       const { data } = await query
-      setEgresos(data || [])
+      const records: Egreso[] = data || []
+
+      // Cargar cuentas P.U.C. para todos los registros
+      if (records.length > 0) {
+        const ids = records.map(r => r.id)
+        const { data: accs } = await supabase
+          .from('expense_accounts')
+          .select('record_id, codigo, cuenta, debito, credito, orden')
+          .in('record_id', ids)
+          .order('orden')
+        const accsMap: Record<number, CuentaPUC[]> = {}
+        ;(accs || []).forEach((a: any) => {
+          if (!accsMap[a.record_id]) accsMap[a.record_id] = []
+          accsMap[a.record_id].push({ codigo: a.codigo, cuenta: a.cuenta, debito: a.debito, credito: a.credito })
+        })
+        records.forEach(r => { r.cuentas = accsMap[r.id] || [] })
+      }
+
+      setEgresos(records)
       setBuscado(true)
     } catch (e) {
       console.error(e)
@@ -393,6 +421,94 @@ export default function InformeEgresos() {
     win.onload = () => win.print()
   }
 
+  // ── Descargar comprobante individual ────────────────────────────────────
+  function descargarComprobante(e: Egreso) {
+    const fmtLocal = (n: number) => n.toLocaleString('es-CO')
+    const ciudad = e.ciudad || 'MONTERÍA'
+    const fechaFmt = e.fecha ? e.fecha.split('-').reverse().join('/') : '—'
+    const enLetras = e.en_letras || numeroALetras(e.valor)
+    const cuentas = e.cuentas || []
+
+    const filasTabla = cuentas.filter(c => c.codigo || c.cuenta).map(c => `
+      <tr>
+        <td>${c.codigo || ''}</td>
+        <td>${c.cuenta || ''}</td>
+        <td class="num">${c.debito > 0 ? '$' + fmtLocal(c.debito) : ''}</td>
+        <td class="num">${c.credito > 0 ? '$' + fmtLocal(c.credito) : ''}</td>
+        <td style="background:#F8FAFF"></td>
+      </tr>`).join('')
+
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+    <title>Comprobante No. ${e.numero || '—'}</title>
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box}
+      body{font-family:Arial,sans-serif;padding:32px;color:#000;background:#fff}
+      .comp-header{background:#1A3A8F;color:#fff;padding:12px 20px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;margin-bottom:0}
+      .comp-title{font-size:15px;font-weight:700;letter-spacing:.04em}
+      .comp-no{font-size:13px;font-weight:500;background:rgba(255,255,255,.15);padding:4px 12px;border-radius:6px}
+      .comprobante{background:#fff;border-radius:12px;padding:28px;box-shadow:0 2px 16px rgba(0,0,0,.08);border:1px solid #D8E4F8}
+      .row-fields{display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap}
+      .field-group{display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px}
+      .field-label{font-size:10px;font-weight:500;color:#8A9CC0;letter-spacing:.06em;text-transform:uppercase}
+      .field-value{font-size:13px;color:#0F2560;padding:8px 12px;background:#F8FAFF;border-radius:8px;border:1px solid #E8EFFD}
+      .field-value.highlight{background:#EEF4FF;color:#1A3A8F;font-weight:700;font-size:16px}
+      .letras-box{background:#E8F8F1;border:1px solid #A8DFC0;border-radius:10px;padding:12px 16px;margin-bottom:16px}
+      .letras-label{font-size:10px;font-weight:500;color:#1A7A4A;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+      .letras-value{font-size:13px;color:#0F2560;font-style:italic}
+      table{width:100%;border-collapse:collapse;margin-bottom:16px;border-radius:10px;overflow:hidden;border:1.5px solid #D8E4F8}
+      th{background:#EEF4FF;padding:10px 14px;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1.5px solid #D8E4F8}
+      td{padding:10px 14px;font-size:13px;color:#0F2560;border-bottom:1px solid #F0F5FF}
+      tr:last-child td{border-bottom:none}
+      .num{text-align:right}
+      .bottom-row{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:16px;margin-top:8px}
+      .firma-box{border-top:2px solid #D8E4F8;padding-top:8px;min-width:200px}
+      .firma-label{font-size:11px;color:#8A9CC0}
+      .doc-box{font-size:13px;color:#0F2560}
+      @media print{body{padding:12px}.comprobante{box-shadow:none}}
+    </style></head><body>
+    <div class="comprobante">
+      <div class="comp-header">
+        <div class="comp-title">COMPROBANTE DE EGRESO — IGLESIA EN MONTERÍA</div>
+        <div class="comp-no">No. ${e.numero || '—'}</div>
+      </div>
+      <div style="padding:24px 0 0">
+        <div class="row-fields">
+          <div class="field-group"><span class="field-label">Ciudad</span><span class="field-value">${ciudad}</span></div>
+          <div class="field-group"><span class="field-label">Fecha</span><span class="field-value">${fechaFmt}</span></div>
+          <div class="field-group"><span class="field-label">Valor $</span><span class="field-value highlight">$${fmtLocal(e.valor)}</span></div>
+        </div>
+        <div class="row-fields">
+          <div class="field-group" style="flex:3"><span class="field-label">Pagado a</span><span class="field-value">${e.pagado_a || '—'}</span></div>
+        </div>
+        <div class="row-fields">
+          <div class="field-group" style="flex:3"><span class="field-label">Por concepto de</span><span class="field-value">${e.concepto || '—'}</span></div>
+        </div>
+        <div class="letras-box">
+          <div class="letras-label">La suma de (en letras)</div>
+          <div class="letras-value">${enLetras}</div>
+        </div>
+        <table>
+          <thead><tr><th>Código P.U.C.</th><th>Cuenta</th><th class="num">Débitos</th><th class="num">Créditos</th><th>Firma y Sello</th></tr></thead>
+          <tbody>${filasTabla || '<tr><td colspan="5" style="text-align:center;color:#8A9CC0;font-style:italic">Sin cuentas registradas</td></tr>'}</tbody>
+        </table>
+        <div class="bottom-row">
+          <div class="doc-box">
+            ${e.efectivo ? '<span style="margin-right:16px">✓ Efectivo</span>' : ''}
+            ${e.doc_tipo && e.doc_numero ? `<span>${e.doc_tipo}: ${e.doc_numero}</span>` : ''}
+          </div>
+          <div class="firma-box"><div class="firma-label">Elaborado por: ${e.elaborado_por || '—'}</div></div>
+        </div>
+      </div>
+    </div>
+    <script>window.onload = () => window.print()<\/script>
+    </body></html>`
+
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(html)
+    win.document.close()
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────
   return (
     <div className="page">
@@ -586,6 +702,7 @@ export default function InformeEgresos() {
                     <th>Concepto</th>
                     <th>Tipo</th>
                     <th className="num">Valor</th>
+                    <th style={{textAlign:'center'}}>Comprobante</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -598,12 +715,24 @@ export default function InformeEgresos() {
                       <td style={{fontSize:12,color:'#4A6090'}}>{e.concepto || '—'}</td>
                       <td><span className="tipo-badge">{TIPOS_LABEL[e.tipo] || e.tipo}</span></td>
                       <td className="num" style={{fontWeight:600,color:'#8B0000'}}>${fmt(e.valor)}</td>
+                      <td style={{textAlign:'center'}}>
+                        <button
+                          onClick={() => descargarComprobante(e)}
+                          title="Descargar comprobante"
+                          style={{background:'#EEF4FF',border:'1.5px solid #C7D9FF',borderRadius:8,padding:'5px 10px',cursor:'pointer',color:'#1A3A8F',display:'inline-flex',alignItems:'center',gap:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",transition:'all .2s'}}
+                          onMouseOver={ev => (ev.currentTarget.style.background='#1A3A8F') && (ev.currentTarget.style.color='#fff') as any}
+                          onMouseOut={ev => { ev.currentTarget.style.background='#EEF4FF'; ev.currentTarget.style.color='#1A3A8F' }}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                          Ver
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={6} style={{fontWeight:600}}>TOTAL GENERAL</td>
+                    <td colSpan={7} style={{fontWeight:600}}>TOTAL GENERAL</td>
                     <td className="num" style={{fontWeight:700}}>${fmt(totalGeneral)}</td>
                   </tr>
                 </tfoot>
