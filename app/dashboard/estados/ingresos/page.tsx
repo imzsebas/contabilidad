@@ -1,5 +1,5 @@
 "use client"
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
@@ -16,8 +16,10 @@ interface FilaLibro {
   valor: number
   e: string
   esIglesia: boolean
+  rowId: number | null
 }
 interface GrupoFecha { fecha: string; filas: FilaLibro[] }
+interface Member { id: number; nombre: string; cedula: string }
 
 // ── Constantes ────────────────────────────────────────────────────────────
 const MESES     = ['01','02','03','04','05','06','07','08','09','10','11','12']
@@ -37,6 +39,64 @@ function scDesdeNombre(nombre: string): number {
   return 5
 }
 
+// ── Autocomplete inline para reasignar miembro de una fila ──────────────────
+function EditarNombreInput({
+  valorActual, members, saving, onSelect
+}: {
+  valorActual: string
+  members: Member[]
+  saving: boolean
+  onSelect: (m: Member) => void
+}) {
+  const [value, setValue] = useState(valorActual)
+  const [open,  setOpen]  = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const suggestions = value.trim().length >= 1
+    ? members.filter(m =>
+        m.nombre.toLowerCase().includes(value.toLowerCase()) || m.cedula.includes(value)
+      ).slice(0, 6)
+    : []
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  function handleSelect(m: Member) {
+    setValue(m.nombre)
+    setOpen(false)
+    onSelect(m)
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%', minWidth: 160 }}>
+      <input
+        className="edit-nombre-input"
+        value={value}
+        autoComplete="off"
+        disabled={saving}
+        placeholder="Buscar miembro..."
+        onChange={e => { setValue(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+      />
+      {open && suggestions.length > 0 && (
+        <div className="autocomplete-dropdown">
+          {suggestions.map(m => (
+            <button key={m.id} type="button" className="autocomplete-item" onClick={() => handleSelect(m)}>
+              <span className="autocomplete-nombre">{m.nombre}</span>
+              <span className="autocomplete-cedula">CC {m.cedula}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Componente ────────────────────────────────────────────────────────────
 export default function EstadoIngresosPage() {
   const router = useRouter()
@@ -47,6 +107,21 @@ export default function EstadoIngresosPage() {
   const [grupos,  setGrupos]  = useState<GrupoFecha[]>([])
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
+
+  // ── Actualizar quién dio la ofrenda (protegido por contraseña) ──────────
+  const PASSWORD_ACTUALIZAR = '1062955748'
+  const [members,          setMembers]          = useState<Member[]>([])
+  const [modoEdicion,      setModoEdicion]       = useState(false)
+  const [showPassModal,    setShowPassModal]     = useState(false)
+  const [passInput,        setPassInput]         = useState('')
+  const [passError,        setPassError]         = useState('')
+  const [guardandoRowId,   setGuardandoRowId]    = useState<number | null>(null)
+  const [errorFila,        setErrorFila]         = useState('')
+
+  useEffect(() => {
+    supabase.from('members').select('id, nombre, cedula').order('nombre')
+      .then(({ data }: any) => { if (data) setMembers(data) })
+  }, [])
 
   // ── Cargar años disponibles ─────────────────────────────────────────────
   useEffect(() => {
@@ -135,7 +210,7 @@ export default function EstadoIngresosPage() {
         porFecha[fecha].filas.push({
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
           nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
-          descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true,
+          descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
         })
 
         // Filas individuales — una por cada valor > 0
@@ -153,7 +228,7 @@ export default function EstadoIngresosPage() {
               nombre:      member ? member.nombre.toUpperCase() : '',
               ccNit:       member ? member.cedula : '',
               descripcion: 'DIEZMOS Y OFRENDAS',
-              valor: val.monto, e: 'CR', esIglesia: false,
+              valor: val.monto, e: 'CR', esIglesia: false, rowId: row.id,
             })
           }
         }
@@ -168,6 +243,36 @@ export default function EstadoIngresosPage() {
   }, [añoSel, mesSel])
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
+
+  // ── Modo edición: quién dio la ofrenda ───────────────────────────────────
+  function abrirActualizar() {
+    if (modoEdicion) { setModoEdicion(false); return }
+    setPassInput(''); setPassError(''); setShowPassModal(true)
+  }
+
+  function confirmarPassword() {
+    if (passInput !== PASSWORD_ACTUALIZAR) { setPassError('Contraseña incorrecta.'); return }
+    setModoEdicion(true)
+    setShowPassModal(false)
+    setPassInput(''); setPassError('')
+  }
+
+  async function actualizarMiembroFila(rowId: number, member: Member) {
+    setGuardandoRowId(rowId); setErrorFila('')
+    const { error: e } = await supabase.from('income_rows').update({ member_id: member.id }).eq('id', rowId)
+    if (e) {
+      setErrorFila('Error al actualizar: ' + e.message)
+      setGuardandoRowId(null)
+      return
+    }
+    setGrupos(prev => prev.map(g => ({
+      ...g,
+      filas: g.filas.map(f => f.rowId === rowId
+        ? { ...f, nombre: member.nombre.toUpperCase(), ccNit: member.cedula }
+        : f)
+    })))
+    setGuardandoRowId(null)
+  }
 
   // ── Exportar Excel (año completo, una hoja por mes) ─────────────────────────
   async function exportarExcel() {
@@ -287,7 +392,7 @@ export default function EstadoIngresosPage() {
         porFecha[fecha].filas.push({
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
           nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
-          descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true,
+          descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
         })
         const recRows = (rByRecord[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
         for (const row of recRows) {
@@ -303,7 +408,7 @@ export default function EstadoIngresosPage() {
               nombre:      member ? member.nombre.toUpperCase() : '',
               ccNit:       member ? member.cedula : '',
               descripcion: 'DIEZMOS Y OFRENDAS',
-              valor: val.monto, e: 'CR', esIglesia: false,
+              valor: val.monto, e: 'CR', esIglesia: false, rowId: row.id,
             })
           }
         }
@@ -384,6 +489,36 @@ export default function EstadoIngresosPage() {
         .btn-excel:hover{background:#A8DFC0}
         .btn-excel:disabled{opacity:.5;cursor:not-allowed}
 
+        .btn-actualizar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #C7D9FF;background:#EEF4FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-actualizar:hover{background:#C7D9FF}
+        .btn-actualizar.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
+        .btn-actualizar:disabled{opacity:.5;cursor:not-allowed}
+
+        .edit-banner{margin:14px 24px 0;padding:10px 14px;background:#EEF4FF;border:1.5px solid #C7D9FF;color:#1A3A8F;border-radius:10px;font-size:12px}
+
+        .edit-nombre-input{width:100%;padding:6px 9px;border:1.5px solid #C7D9FF;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
+        .edit-nombre-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 2px rgba(43,91,191,.15);background:#fff}
+        .edit-nombre-input:disabled{opacity:.6}
+
+        .autocomplete-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D8E4F8;border-radius:10px;box-shadow:0 8px 24px rgba(43,91,191,.15);z-index:200;overflow:hidden;text-align:left}
+        .autocomplete-item{width:100%;background:none;border:none;padding:8px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;transition:background .15s;font-family:'DM Sans',sans-serif}
+        .autocomplete-item:hover{background:#EEF4FF}
+        .autocomplete-nombre{font-size:12px;font-weight:500;color:#0F2560}
+        .autocomplete-cedula{font-size:10px;color:#8A9CC0}
+
+        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
+        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
+        .modal-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#0F2560;margin-bottom:6px}
+        .modal-sub{font-size:12px;color:#8A9CC0;margin-bottom:16px}
+        .modal-input{width:100%;padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;margin-bottom:10px}
+        .modal-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
+        .modal-error{font-size:12px;color:#C0392B;margin:-2px 0 10px}
+        .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+        .btn-modal-primary{background:#2B5BBF;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
+        .btn-modal-primary:hover{background:#1A3A8F}
+        .btn-modal-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
+        .btn-modal-ghost:hover{background:#F0F5FF}
+
         .table-wrap{overflow-x:auto}
         table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
         thead tr{background:#F0F5FF}
@@ -449,13 +584,23 @@ export default function EstadoIngresosPage() {
                 <div className="info-total">Total del mes: <strong>${fmt(totalMes)}</strong></div>
               )}
             </div>
-            <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              Exportar Excel
-            </button>
+            <div style={{display:'flex',gap:10}}>
+              <button className={`btn-actualizar ${modoEdicion ? 'active' : ''}`} onClick={abrirActualizar} disabled={loading || grupos.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+                {modoEdicion ? 'Finalizar edición' : 'Actualizar'}
+              </button>
+              <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                Exportar Excel
+              </button>
+            </div>
           </div>
 
           {error && <div className="err">{error}</div>}
+          {errorFila && <div className="err">{errorFila}</div>}
+          {modoEdicion && !loading && grupos.length > 0 && (
+            <div className="edit-banner">Modo edición activo: haz clic en un nombre para reasignar el miembro correcto.</div>
+          )}
 
           {loading ? (
             <div className="load-wrap"><div className="spinner"/><div>Cargando registros...</div></div>
@@ -484,7 +629,16 @@ export default function EstadoIngresosPage() {
                           <td className="cc">{f.cuenta}</td>
                           <td className="cc">{f.sc}</td>
                           <td className="cc">{f.aux}</td>
-                          <td className="cl">{f.nombre}</td>
+                          <td className="cl">
+                            {modoEdicion && !f.esIglesia && f.rowId ? (
+                              <EditarNombreInput
+                                valorActual={f.nombre}
+                                members={members}
+                                saving={guardandoRowId === f.rowId}
+                                onSelect={m => actualizarMiembroFila(f.rowId as number, m)}
+                              />
+                            ) : f.nombre}
+                          </td>
                           <td className="cc">{f.ccNit}</td>
                           <td className="cc">{f.descripcion}</td>
                           <td className={`cr ${f.esIglesia ? 'val-ig' : ''}`}>${fmt(f.valor)}</td>
@@ -502,6 +656,30 @@ export default function EstadoIngresosPage() {
           )}
         </div>
       </div>
+
+      {/* Modal: contraseña para activar modo edición */}
+      {showPassModal && (
+        <div className="modal-overlay" onClick={() => setShowPassModal(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Confirmar contraseña</div>
+            <div className="modal-sub">Ingresa la contraseña para poder actualizar quién dio la ofrenda.</div>
+            {passError && <div className="modal-error">{passError}</div>}
+            <input
+              type="password"
+              className="modal-input"
+              placeholder="Contraseña"
+              value={passInput}
+              autoFocus
+              onChange={e => setPassInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmarPassword()}
+            />
+            <div className="modal-actions">
+              <button className="btn-modal-ghost" onClick={() => setShowPassModal(false)}>Cancelar</button>
+              <button className="btn-modal-primary" onClick={confirmarPassword}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

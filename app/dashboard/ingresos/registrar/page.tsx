@@ -193,6 +193,13 @@ export default function RegistrarIngreso() {
   const [saved,          setSaved]          = useState(false)
   const [error,          setError]          = useState('')
 
+  // Alta rápida de miembro nuevo desde la tabla de ingresos
+  const [showNuevoMiembro,   setShowNuevoMiembro]   = useState(false)
+  const [nuevoMiembroRowId,  setNuevoMiembroRowId]  = useState<string | null>(null)
+  const [nuevoMiembroForm,   setNuevoMiembroForm]   = useState({ nombre: '', cedula: '', telefono: '', edad: '' as number | '' })
+  const [nuevoMiembroSaving, setNuevoMiembroSaving] = useState(false)
+  const [nuevoMiembroError,  setNuevoMiembroError]  = useState('')
+
   // Cargar miembros activos
   useEffect(() => {
     supabase
@@ -249,6 +256,50 @@ export default function RegistrarIngreso() {
   // ✅ FIX: función unificada con updater funcional — nunca usa el closure de rows
   function updateRow(rid: string, patch: Partial<Row>) {
     setRows(prev => prev.map(r => r.id === rid ? { ...r, ...patch } : r))
+  }
+
+  // ── Alta rápida de miembro nuevo ─────────────────────────────────────────
+  function abrirNuevoMiembro(rowId: string, nombreActual: string) {
+    setNuevoMiembroRowId(rowId)
+    setNuevoMiembroForm({ nombre: nombreActual.trim(), cedula: '', telefono: '', edad: '' })
+    setNuevoMiembroError('')
+    setShowNuevoMiembro(true)
+  }
+
+  function cerrarNuevoMiembro() {
+    setShowNuevoMiembro(false)
+    setNuevoMiembroRowId(null)
+    setNuevoMiembroForm({ nombre: '', cedula: '', telefono: '', edad: '' })
+    setNuevoMiembroError('')
+  }
+
+  async function guardarNuevoMiembro() {
+    if (!nuevoMiembroForm.nombre.trim()) { setNuevoMiembroError('El nombre es obligatorio.'); return }
+    if (!nuevoMiembroForm.cedula.trim()) { setNuevoMiembroError('La cédula es obligatoria.'); return }
+    setNuevoMiembroSaving(true); setNuevoMiembroError('')
+
+    const payload = {
+      nombre:   nuevoMiembroForm.nombre.trim(),
+      cedula:   nuevoMiembroForm.cedula.trim(),
+      telefono: nuevoMiembroForm.telefono.trim(),
+      edad:     nuevoMiembroForm.edad === '' ? null : Number(nuevoMiembroForm.edad),
+      activo:   true,
+    }
+    const { data, error: e } = await supabase
+      .from('members').insert(payload).select('id, nombre, cedula').single()
+
+    if (e || !data) {
+      setNuevoMiembroError('Error al guardar: ' + (e?.message || 'inténtalo de nuevo'))
+      setNuevoMiembroSaving(false)
+      return
+    }
+
+    // Lo agrega a la lista local (ordenado) y lo asigna a la fila que lo originó
+    setMembers(prev => [...prev, data].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    if (nuevoMiembroRowId) updateRow(nuevoMiembroRowId, { nombre: data.nombre, memberId: data.id })
+
+    setNuevoMiembroSaving(false)
+    cerrarNuevoMiembro()
   }
 
   // ── Distribución ───────────────────────────────────────────────────────
@@ -663,6 +714,18 @@ export default function RegistrarIngreso() {
         .btn-pdf:hover{background:#C7D9FF}
         .btn-sm{padding:6px 12px;font-size:12px}
         .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+        .btn-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8}
+        .btn-ghost:hover{background:#F0F5FF}
+
+        .btn-add-member{flex-shrink:0;width:38px;height:38px;border-radius:8px;border:1.5px dashed #B9CDF5;background:#F5F8FF;color:#2B5BBF;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+        .btn-add-member:hover{background:#EEF4FF;border-color:#2B5BBF;border-style:solid}
+
+        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
+        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:480px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
+        .modal-title{display:flex;align-items:center;justify-content:space-between;font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#0F2560;margin-bottom:18px}
+        .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+        .modal-actions{display:flex;justify-content:flex-end;gap:10px}
+        @media(max-width:480px){.modal-grid{grid-template-columns:1fr}}
 
         .table-wrap{overflow-x:auto;border-radius:12px;border:1.5px solid #D8E4F8}
         table{width:100%;border-collapse:collapse;min-width:400px}
@@ -812,13 +875,21 @@ export default function RegistrarIngreso() {
                 {rows.map((row, i) => (
                   <tr key={row.id}>
                     <td>
-                      {/* ✅ FIX: prop unificada onUpdate en lugar de onChange + onSelect separados */}
-                      <AutocompleteInput
-                        value={row.nombre}
-                        memberId={row.memberId}
-                        members={members}
-                        onUpdate={patch => updateRow(row.id, patch)}
-                      />
+                      <div style={{display:'flex',gap:6,alignItems:'flex-start'}}>
+                        {/* ✅ FIX: prop unificada onUpdate en lugar de onChange + onSelect separados */}
+                        <AutocompleteInput
+                          value={row.nombre}
+                          memberId={row.memberId}
+                          members={members}
+                          onUpdate={patch => updateRow(row.id, patch)}
+                        />
+                        <button
+                          type="button"
+                          className="btn-add-member"
+                          title="Agregar nuevo miembro"
+                          onClick={() => abrirNuevoMiembro(row.id, row.nombre)}
+                        >+</button>
+                      </div>
                     </td>
                     <td style={{textAlign:'center',color:'#8A9CC0',fontSize:12}}>{i+1}</td>
                     {cols.map(c => (
@@ -956,6 +1027,71 @@ export default function RegistrarIngreso() {
           </button>
         </div>
       </div>
+
+      {/* Modal: alta rápida de miembro nuevo */}
+      {showNuevoMiembro && (
+        <div className="modal-overlay" onClick={cerrarNuevoMiembro}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">
+              <span>Nuevo miembro</span>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={cerrarNuevoMiembro}>✕</button>
+            </div>
+
+            {nuevoMiembroError && (
+              <div className="alert-error" style={{marginBottom:14}}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {nuevoMiembroError}
+              </div>
+            )}
+
+            <div className="modal-grid">
+              <div className="field-wrap" style={{gridColumn:'span 2'}}>
+                <span className="field-label">Nombre completo *</span>
+                <input
+                  className="text-input" style={{width:'100%'}}
+                  placeholder="Ej: María García"
+                  value={nuevoMiembroForm.nombre}
+                  onChange={e => setNuevoMiembroForm(f => ({ ...f, nombre: e.target.value }))}
+                />
+              </div>
+              <div className="field-wrap">
+                <span className="field-label">Cédula *</span>
+                <input
+                  className="text-input" style={{width:'100%'}}
+                  placeholder="Ej: 12345678"
+                  value={nuevoMiembroForm.cedula}
+                  onChange={e => setNuevoMiembroForm(f => ({ ...f, cedula: e.target.value }))}
+                />
+              </div>
+              <div className="field-wrap">
+                <span className="field-label">Teléfono</span>
+                <input
+                  className="text-input" style={{width:'100%'}}
+                  placeholder="Ej: 3001234567"
+                  value={nuevoMiembroForm.telefono}
+                  onChange={e => setNuevoMiembroForm(f => ({ ...f, telefono: e.target.value }))}
+                />
+              </div>
+              <div className="field-wrap">
+                <span className="field-label">Edad</span>
+                <input
+                  className="text-input" style={{width:'100%'}}
+                  type="number" min="1" max="120" placeholder="Ej: 35"
+                  value={nuevoMiembroForm.edad}
+                  onChange={e => setNuevoMiembroForm(f => ({ ...f, edad: e.target.value === '' ? '' : Number(e.target.value) }))}
+                />
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={cerrarNuevoMiembro}>Cancelar</button>
+              <button type="button" className="btn btn-primary" onClick={guardarNuevoMiembro} disabled={nuevoMiembroSaving}>
+                {nuevoMiembroSaving ? 'Guardando...' : 'Guardar miembro'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
