@@ -16,6 +16,9 @@ interface FilaLibro {
   valor: number
   e: string
   esPrincipal: boolean   // primera fila del egreso (débito principal)
+  recordId: number       // id en expense_records (para editar descripción/concepto)
+  accountId: number | null  // id en expense_accounts (para editar el valor de esta fila)
+  campoValor: 'debito' | 'credito'
 }
 interface GrupoEgreso {
   fecha: string
@@ -43,6 +46,108 @@ function parseCodigo(codigo: string): { cuenta: number | string; sc: number | st
   }
 }
 
+// ── Edición inline: valor ────────────────────────────────────────────────
+function EditarValorInline({
+  valorActual, saving, onSave
+}: { valorActual: number; saving: boolean; onSave: (v: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [value,   setValue]   = useState(String(valorActual))
+
+  function confirmar() {
+    const n = parseInt(value.replace(/\D/g, '')) || 0
+    setEditing(false)
+    if (n !== valorActual) onSave(n)
+  }
+
+  if (saving) return <span style={{opacity:.5}}>${fmt(valorActual)}</span>
+
+  if (!editing) {
+    return (
+      <span className="valor-editable" onClick={() => { setValue(String(valorActual)); setEditing(true) }}>
+        ${fmt(valorActual)}
+      </span>
+    )
+  }
+  return (
+    <input
+      className="edit-valor-input"
+      value={value}
+      autoFocus
+      onChange={e => setValue(e.target.value.replace(/[^0-9]/g,''))}
+      onBlur={confirmar}
+      onKeyDown={e => { if (e.key === 'Enter') confirmar(); if (e.key === 'Escape') setEditing(false) }}
+    />
+  )
+}
+
+// ── Edición inline: descripción ──────────────────────────────────────────
+function EditarTextoInline({
+  valorActual, saving, onSave
+}: { valorActual: string; saving: boolean; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [value,   setValue]   = useState(valorActual)
+
+  function confirmar() {
+    setEditing(false)
+    const v = value.trim()
+    if (v !== valorActual) onSave(v)
+  }
+
+  if (saving) return <span style={{opacity:.5}}>{valorActual || '—'}</span>
+
+  if (!editing) {
+    return (
+      <span className="desc-editable" onClick={() => { setValue(valorActual); setEditing(true) }}>
+        {valorActual || '—'}
+      </span>
+    )
+  }
+  return (
+    <input
+      className="edit-desc-input"
+      value={value}
+      autoFocus
+      onChange={e => setValue(e.target.value)}
+      onBlur={confirmar}
+      onKeyDown={e => { if (e.key === 'Enter') confirmar(); if (e.key === 'Escape') setEditing(false) }}
+    />
+  )
+}
+
+// ── Edición inline: fecha ────────────────────────────────────────────────
+function EditarFechaInline({
+  valorActual, saving, onSave
+}: { valorActual: string; saving: boolean; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [value,   setValue]   = useState(valorActual)
+
+  function confirmar() {
+    setEditing(false)
+    if (value && value !== valorActual) onSave(value)
+  }
+
+  if (saving) return <span style={{opacity:.5}}>{valorActual.split('-').reverse().join('/')}</span>
+
+  if (!editing) {
+    return (
+      <span className="valor-editable" onClick={() => { setValue(valorActual); setEditing(true) }}>
+        {valorActual.split('-').reverse().join('/')}
+      </span>
+    )
+  }
+  return (
+    <input
+      type="date"
+      className="edit-fecha-input"
+      value={value}
+      autoFocus
+      onChange={e => setValue(e.target.value)}
+      onBlur={confirmar}
+      onKeyDown={e => { if (e.key === 'Enter') confirmar(); if (e.key === 'Escape') setEditing(false) }}
+    />
+  )
+}
+
 // ── Componente ─────────────────────────────────────────────────────────────
 export default function EstadoEgresosPage() {
   const router = useRouter()
@@ -53,6 +158,15 @@ export default function EstadoEgresosPage() {
   const [grupos,  setGrupos]  = useState<GrupoEgreso[]>([])
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
+
+  // ── Actualizar descripción/valor (protegido por contraseña) ──────────────
+  const PASSWORD_ACTUALIZAR = '1062955748'
+  const [modoEdicion,   setModoEdicion]   = useState(false)
+  const [showPassModal, setShowPassModal] = useState(false)
+  const [passInput,     setPassInput]     = useState('')
+  const [passError,     setPassError]     = useState('')
+  const [guardandoId,   setGuardandoId]   = useState<string | null>(null)
+  const [errorFila,     setErrorFila]     = useState('')
 
   // ── Cargar años disponibles ───────────────────────────────────────────────
   useEffect(() => {
@@ -136,6 +250,9 @@ export default function EstadoEgresosPage() {
             valor:       principal.debito,
             e:           '',
             esPrincipal: true,
+            recordId:    rec.id,
+            accountId:   principal.id,
+            campoValor:  'debito',
           })
         }
 
@@ -156,6 +273,9 @@ export default function EstadoEgresosPage() {
               valor:       acc.debito,
               e:           'CR',
               esPrincipal: false,
+              recordId:    rec.id,
+              accountId:   acc.id,
+              campoValor:  'debito',
             })
           })
 
@@ -176,6 +296,9 @@ export default function EstadoEgresosPage() {
               valor:       acc.credito,
               e:           'CR',
               esPrincipal: false,
+              recordId:    rec.id,
+              accountId:   acc.id,
+              campoValor:  'credito',
             })
           })
 
@@ -193,6 +316,79 @@ export default function EstadoEgresosPage() {
   }, [añoSel, mesSel])
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
+
+  // ── Modo edición: descripción y valor ────────────────────────────────────
+  function abrirActualizar() {
+    if (modoEdicion) { setModoEdicion(false); return }
+    setPassInput(''); setPassError(''); setShowPassModal(true)
+  }
+
+  function confirmarPassword() {
+    if (passInput !== PASSWORD_ACTUALIZAR) { setPassError('Contraseña incorrecta.'); return }
+    setModoEdicion(true)
+    setShowPassModal(false)
+    setPassInput(''); setPassError('')
+  }
+
+  async function actualizarDescripcion(recordId: number, nuevoValor: string) {
+    const key = `desc-${recordId}`
+    setGuardandoId(key); setErrorFila('')
+    const { error: e } = await supabase.from('expense_records').update({ concepto: nuevoValor }).eq('id', recordId)
+    if (e) {
+      setErrorFila('Error al actualizar: ' + e.message)
+      setGuardandoId(null)
+      return
+    }
+    setGrupos(prev => prev.map(g => ({
+      ...g,
+      filas: g.filas.map(f => f.recordId === recordId ? { ...f, descripcion: nuevoValor } : f)
+    })))
+    setGuardandoId(null)
+  }
+
+  async function actualizarValor(accountId: number, campo: 'debito' | 'credito', nuevoValor: number) {
+    const key = `valor-${accountId}`
+    setGuardandoId(key); setErrorFila('')
+    const { error: e } = await supabase.from('expense_accounts').update({ [campo]: nuevoValor }).eq('id', accountId)
+    if (e) {
+      setErrorFila('Error al actualizar: ' + e.message)
+      setGuardandoId(null)
+      return
+    }
+    setGrupos(prev => prev.map(g => ({
+      ...g,
+      filas: g.filas.map(f => f.accountId === accountId ? { ...f, valor: nuevoValor } : f)
+    })))
+    setGuardandoId(null)
+  }
+
+  async function actualizarFecha(recordId: number, nuevaFecha: string) {
+    const key = `fecha-${recordId}`
+    setGuardandoId(key); setErrorFila('')
+    const { error: e } = await supabase.from('expense_records').update({ fecha: nuevaFecha }).eq('id', recordId)
+    if (e) {
+      setErrorFila('Error al actualizar: ' + e.message)
+      setGuardandoId(null)
+      return
+    }
+    setGuardandoId(null)
+
+    const nuevoAño = nuevaFecha.slice(0, 4)
+    const nuevoMes = nuevaFecha.slice(5, 7)
+
+    if (nuevoAño !== añoSel || nuevoMes !== mesSel) {
+      // El registro se movió a otro mes/año: cambiamos de pestaña y se recarga solo
+      setAños(prev => prev.includes(nuevoAño) ? prev : [...prev, nuevoAño].sort())
+      setAñoSel(nuevoAño)
+      setMesSel(nuevoMes)
+    } else {
+      setGrupos(prev => prev.map(g =>
+        g.filas.some(f => f.recordId === recordId)
+          ? { ...g, fecha: nuevaFecha, filas: g.filas.map(f => f.recordId === recordId ? { ...f, fecha: nuevaFecha } : f) }
+          : g
+      ))
+    }
+  }
 
   // ── Exportar Excel (año completo, una hoja por mes) ───────────────────────
   async function exportarExcel() {
@@ -377,6 +573,35 @@ export default function EstadoEgresosPage() {
         .btn-excel:hover{background:#FBBCBC}
         .btn-excel:disabled{opacity:.5;cursor:not-allowed}
 
+        .btn-actualizar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #FBBCBC;background:#FFF5F5;color:#C0392B;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-actualizar:hover{background:#FBBCBC}
+        .btn-actualizar.active{background:#C0392B;color:#fff;border-color:#C0392B}
+        .btn-actualizar:disabled{opacity:.5;cursor:not-allowed}
+
+        .edit-banner{margin:14px 24px 0;padding:10px 14px;background:#FFF5F5;border:1.5px solid #FBBCBC;color:#8A2E2E;border-radius:10px;font-size:12px}
+
+        .valor-editable, .desc-editable{cursor:pointer;border-bottom:1px dashed transparent;padding-bottom:1px}
+        .valor-editable:hover, .desc-editable:hover{border-bottom-color:#C0392B}
+        .edit-valor-input{width:100%;padding:6px 9px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;text-align:right;transition:border .2s}
+        .edit-valor-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
+        .edit-desc-input{width:100%;padding:6px 9px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
+        .edit-desc-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
+        .edit-fecha-input{padding:5px 8px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
+        .edit-fecha-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
+
+        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
+        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
+        .modal-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#0F2560;margin-bottom:6px}
+        .modal-sub{font-size:12px;color:#8A9CC0;margin-bottom:16px}
+        .modal-input{width:100%;padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;margin-bottom:10px}
+        .modal-input:focus{border-color:#C0392B;box-shadow:0 0 0 3px rgba(192,57,43,.1)}
+        .modal-error{font-size:12px;color:#C0392B;margin:-2px 0 10px}
+        .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+        .btn-modal-primary{background:#C0392B;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
+        .btn-modal-primary:hover{background:#9E2D20}
+        .btn-modal-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
+        .btn-modal-ghost:hover{background:#F0F5FF}
+
         .table-wrap{overflow-x:auto}
         table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
         thead tr{background:#FFF5F5}
@@ -444,13 +669,23 @@ export default function EstadoEgresosPage() {
                 <div className="info-total">Total egresos del mes: <strong>${fmt(totalMes)}</strong></div>
               )}
             </div>
-            <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              Exportar Excel
-            </button>
+            <div style={{display:'flex',gap:10}}>
+              <button className={`btn-actualizar ${modoEdicion ? 'active' : ''}`} onClick={abrirActualizar} disabled={loading || grupos.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+                {modoEdicion ? 'Finalizar edición' : 'Actualizar'}
+              </button>
+              <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                Exportar Excel
+              </button>
+            </div>
           </div>
 
           {error && <div className="err">{error}</div>}
+          {errorFila && <div className="err">{errorFila}</div>}
+          {modoEdicion && !loading && grupos.length > 0 && (
+            <div className="edit-banner">Modo edición activo: haz clic en una fecha, descripción o valor para editarlo. Si cambias la fecha a otro mes, el registro se moverá automáticamente a esa pestaña. Los cambios se guardan directo en la base de datos.</div>
+          )}
 
           {loading ? (
             <div className="load-wrap"><div className="spinner"/><div>Cargando registros...</div></div>
@@ -475,14 +710,38 @@ export default function EstadoEgresosPage() {
                         <tr key={`${gi}-${fi}`} className={f.esPrincipal ? 'tr-principal' : ''}>
                           <td className="cc">{f.tc}</td>
                           <td className="cc">{fi === 0 ? (g.numero ?? '') : ''}</td>
-                          <td className="cc">{g.fecha.split('-').reverse().join('/')}</td>
+                          <td className="cc">
+                            {modoEdicion ? (
+                              <EditarFechaInline
+                                valorActual={f.fecha}
+                                saving={guardandoId === `fecha-${f.recordId}`}
+                                onSave={v => actualizarFecha(f.recordId, v)}
+                              />
+                            ) : g.fecha.split('-').reverse().join('/')}
+                          </td>
                           <td className="cc">{f.cuenta}</td>
                           <td className="cc">{f.sc}</td>
                           <td className="cc">{f.aux}</td>
                           <td className="cl">{f.nombre}</td>
                           <td className="cc">{f.ccNit}</td>
-                          <td className="cc td-desc">{f.descripcion}</td>
-                          <td className={`cr ${f.esPrincipal ? 'val-ppal' : ''}`}>${fmt(f.valor)}</td>
+                          <td className="cc td-desc">
+                            {modoEdicion ? (
+                              <EditarTextoInline
+                                valorActual={f.descripcion}
+                                saving={guardandoId === `desc-${f.recordId}`}
+                                onSave={v => actualizarDescripcion(f.recordId, v)}
+                              />
+                            ) : f.descripcion}
+                          </td>
+                          <td className={`cr ${f.esPrincipal ? 'val-ppal' : ''}`}>
+                            {modoEdicion && f.accountId ? (
+                              <EditarValorInline
+                                valorActual={f.valor}
+                                saving={guardandoId === `valor-${f.accountId}`}
+                                onSave={v => actualizarValor(f.accountId as number, f.campoValor, v)}
+                              />
+                            ) : `$${fmt(f.valor)}`}
+                          </td>
                           <td className={`cc ${f.e === 'CR' ? 'ecr' : ''}`}>{f.e}</td>
                         </tr>
                       ))}
@@ -497,6 +756,30 @@ export default function EstadoEgresosPage() {
           )}
         </div>
       </div>
+
+      {/* Modal: contraseña para activar modo edición */}
+      {showPassModal && (
+        <div className="modal-overlay" onClick={() => setShowPassModal(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Confirmar contraseña</div>
+            <div className="modal-sub">Ingresa la contraseña para poder editar descripciones y valores.</div>
+            {passError && <div className="modal-error">{passError}</div>}
+            <input
+              type="password"
+              className="modal-input"
+              placeholder="Contraseña"
+              value={passInput}
+              autoFocus
+              onChange={e => setPassInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmarPassword()}
+            />
+            <div className="modal-actions">
+              <button className="btn-modal-ghost" onClick={() => setShowPassModal(false)}>Cancelar</button>
+              <button className="btn-modal-primary" onClick={confirmarPassword}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
