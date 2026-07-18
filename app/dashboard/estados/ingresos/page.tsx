@@ -17,6 +17,8 @@ interface FilaLibro {
   e: string
   esIglesia: boolean
   rowId: number | null
+  recordId: number
+  columnId: number | null
 }
 interface GrupoFecha { fecha: string; filas: FilaLibro[] }
 interface Member { id: number; nombre: string; cedula: string }
@@ -97,6 +99,41 @@ function EditarNombreInput({
   )
 }
 
+// ── Input inline para editar el valor (monto) de una fila ───────────────────
+function EditarValorInput({
+  valorActual, saving, onSave
+}: {
+  valorActual: number
+  saving: boolean
+  onSave: (nuevoValor: number) => void
+}) {
+  const [value, setValue] = useState(String(valorActual))
+
+  useEffect(() => { setValue(String(valorActual)) }, [valorActual])
+
+  function commit() {
+    const num = parseInt(value.replace(/[^\d]/g, ''), 10)
+    if (!isNaN(num) && num >= 0 && num !== valorActual) {
+      onSave(num)
+    } else {
+      setValue(String(valorActual))
+    }
+  }
+
+  return (
+    <input
+      className="edit-valor-input"
+      value={value}
+      disabled={saving}
+      inputMode="numeric"
+      onChange={e => setValue(e.target.value)}
+      onFocus={e => e.target.select()}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+    />
+  )
+}
+
 // ── Componente ────────────────────────────────────────────────────────────
 export default function EstadoIngresosPage() {
   const router = useRouter()
@@ -108,7 +145,8 @@ export default function EstadoIngresosPage() {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
 
-  // ── Actualizar quién dio la ofrenda (protegido por contraseña) ──────────
+  // ── Modificar (protegido por contraseña): reasignar miembro, editar valor,
+  //     eliminar registros individuales y agregar uno omitido ────────────────
   const PASSWORD_ACTUALIZAR = '1062955748'
   const [members,          setMembers]          = useState<Member[]>([])
   const [modoEdicion,      setModoEdicion]       = useState(false)
@@ -117,6 +155,24 @@ export default function EstadoIngresosPage() {
   const [passError,        setPassError]         = useState('')
   const [guardandoRowId,   setGuardandoRowId]    = useState<number | null>(null)
   const [errorFila,        setErrorFila]         = useState('')
+
+  // Columnas (diezmo/ofrenda/voto) disponibles por cada registro (record_id)
+  const [columnasPorRegistro, setColumnasPorRegistro] = useState<Record<number, { id: number; nombre: string }[]>>({})
+
+  // Selección para eliminar registros individuales (clave = `${rowId}_${columnId}`)
+  const [seleccionados,      setSeleccionados]      = useState<Set<string>>(new Set())
+  const [eliminando,         setEliminando]         = useState(false)
+  const [showConfirmEliminar, setShowConfirmEliminar] = useState(false)
+
+  // Modal para agregar una ofrenda/diezmo omitida a un registro existente
+  const [showAgregarModal, setShowAgregarModal] = useState(false)
+  const [agregarRecordId,  setAgregarRecordId]  = useState<number | null>(null)
+  const [agregarFecha,     setAgregarFecha]     = useState('')
+  const [agregarMiembro,   setAgregarMiembro]   = useState<Member | null>(null)
+  const [agregarColumnaId, setAgregarColumnaId] = useState<number | null>(null)
+  const [agregarValor,     setAgregarValor]     = useState('')
+  const [agregarError,     setAgregarError]     = useState('')
+  const [agregando,        setAgregando]        = useState(false)
 
   useEffect(() => {
     supabase.from('members').select('id, nombre, cedula').order('nombre')
@@ -187,6 +243,13 @@ export default function EstadoIngresosPage() {
       const colMap: Record<number, string> = {}
       ;(cols || []).forEach((c: any) => { colMap[c.id] = c.nombre })
 
+      const columnasMap: Record<number, { id: number; nombre: string }[]> = {}
+      ;(cols || []).forEach((c: any) => {
+        if (!columnasMap[c.record_id]) columnasMap[c.record_id] = []
+        columnasMap[c.record_id].push({ id: c.id, nombre: c.nombre })
+      })
+      setColumnasPorRegistro(columnasMap)
+
       const valsByRow: Record<number, { column_id: number; monto: number }[]> = {}
       ;(vals || []).forEach((v: any) => {
         if (!valsByRow[v.row_id]) valsByRow[v.row_id] = []
@@ -211,6 +274,7 @@ export default function EstadoIngresosPage() {
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
           nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
           descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
+          recordId: rec.id, columnId: null,
         })
 
         // Filas individuales — una por cada valor > 0
@@ -229,6 +293,7 @@ export default function EstadoIngresosPage() {
               ccNit:       member ? member.cedula : '',
               descripcion: 'DIEZMOS Y OFRENDAS',
               valor: val.monto, e: 'CR', esIglesia: false, rowId: row.id,
+              recordId: rec.id, columnId: val.column_id,
             })
           }
         }
@@ -244,9 +309,13 @@ export default function EstadoIngresosPage() {
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
 
-  // ── Modo edición: quién dio la ofrenda ───────────────────────────────────
-  function abrirActualizar() {
-    if (modoEdicion) { setModoEdicion(false); return }
+  // ── Modificar (una sola contraseña habilita las 4 funciones) ────────────
+  function abrirModificar() {
+    if (modoEdicion) {
+      setModoEdicion(false)
+      setSeleccionados(new Set())
+      return
+    }
     setPassInput(''); setPassError(''); setShowPassModal(true)
   }
 
@@ -257,6 +326,7 @@ export default function EstadoIngresosPage() {
     setPassInput(''); setPassError('')
   }
 
+  // ── 1. Reasignar el miembro que dio la ofrenda ───────────────────────────
   async function actualizarMiembroFila(rowId: number, member: Member) {
     setGuardandoRowId(rowId); setErrorFila('')
     const { error: e } = await supabase.from('income_rows').update({ member_id: member.id }).eq('id', rowId)
@@ -272,6 +342,187 @@ export default function EstadoIngresosPage() {
         : f)
     })))
     setGuardandoRowId(null)
+  }
+
+  // ── 2. Editar el valor (monto) de una fila y recalcular el total del registro ──
+  async function actualizarValorFila(f: FilaLibro, nuevoValor: number) {
+    if (!f.rowId || f.columnId == null) return
+    setGuardandoRowId(f.rowId); setErrorFila('')
+    try {
+      const { error: eVal } = await supabase
+        .from('income_values')
+        .update({ monto: nuevoValor })
+        .eq('row_id', f.rowId).eq('column_id', f.columnId)
+      if (eVal) throw eVal
+
+      const nuevoTotal = grupos
+        .flatMap(g => g.filas)
+        .filter(x => x.recordId === f.recordId && !x.esIglesia)
+        .reduce((acc, x) => acc + ((x.rowId === f.rowId && x.columnId === f.columnId) ? nuevoValor : x.valor), 0)
+
+      const { error: eRec } = await supabase.from('income_records').update({ total: nuevoTotal }).eq('id', f.recordId)
+      if (eRec) throw eRec
+
+      setGrupos(prev => prev.map(g => ({
+        ...g,
+        filas: g.filas.map(x => {
+          if (x.rowId === f.rowId && x.columnId === f.columnId) return { ...x, valor: nuevoValor }
+          if (x.esIglesia && x.recordId === f.recordId) return { ...x, valor: nuevoTotal }
+          return x
+        })
+      })))
+    } catch (e: any) {
+      setErrorFila('Error al actualizar valor: ' + (e.message || e))
+    } finally {
+      setGuardandoRowId(null)
+    }
+  }
+
+  // ── 3. Eliminar uno o varios registros individuales (no el total del día) ──
+  function claveFila(f: FilaLibro) { return `${f.rowId}_${f.columnId}` }
+
+  function toggleSeleccion(f: FilaLibro) {
+    const key = claveFila(f)
+    setSeleccionados(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  async function eliminarSeleccionados() {
+    if (seleccionados.size === 0) return
+    setEliminando(true); setErrorFila('')
+    try {
+      const filasSel = grupos.flatMap(g => g.filas)
+        .filter(f => !f.esIglesia && f.rowId && seleccionados.has(claveFila(f)))
+
+      // Borrar cada valor individual seleccionado
+      for (const f of filasSel) {
+        const { error: eVal } = await supabase.from('income_values')
+          .delete().eq('row_id', f.rowId as number).eq('column_id', f.columnId as number)
+        if (eVal) throw eVal
+      }
+
+      // Si una fila (income_rows) se quedó sin ningún valor, se elimina también
+      const rowIdsAfectados: number[] = Array.from(new Set<number>(filasSel.map(f => f.rowId as number)))
+      for (const rowId of rowIdsAfectados) {
+        const { data: restantes } = await supabase.from('income_values').select('id').eq('row_id', rowId).limit(1)
+        if (!restantes || restantes.length === 0) {
+          await supabase.from('income_rows').delete().eq('id', rowId)
+        }
+      }
+
+      // Recalcular el total de cada registro afectado; si se queda sin ninguna
+      // ofrenda individual, el registro completo (fila total incluida) se elimina
+      const recordIdsAfectados: number[] = Array.from(new Set<number>(filasSel.map(f => f.recordId)))
+      const nuevosTotales: Record<number, number> = {}
+      const recordsVacios: number[] = []
+
+      for (const recId of recordIdsAfectados) {
+        const filasRestantes = grupos.flatMap(g => g.filas)
+          .filter(x => x.recordId === recId && !x.esIglesia && !seleccionados.has(claveFila(x)))
+
+        if (filasRestantes.length === 0) {
+          recordsVacios.push(recId)
+          const { error: eCols } = await supabase.from('income_columns').delete().eq('record_id', recId)
+          if (eCols) throw eCols
+          const { error: eRec } = await supabase.from('income_records').delete().eq('id', recId)
+          if (eRec) throw eRec
+        } else {
+          const nuevoTotal = filasRestantes.reduce((a, x) => a + x.valor, 0)
+          nuevosTotales[recId] = nuevoTotal
+          const { error: eRec } = await supabase.from('income_records').update({ total: nuevoTotal }).eq('id', recId)
+          if (eRec) throw eRec
+        }
+      }
+
+      setGrupos(prev => prev
+        .map(g => ({
+          ...g,
+          filas: g.filas
+            .filter(f => !seleccionados.has(claveFila(f)))
+            .filter(f => !(f.esIglesia && recordsVacios.includes(f.recordId)))
+            .map(f => (f.esIglesia && nuevosTotales[f.recordId] !== undefined) ? { ...f, valor: nuevosTotales[f.recordId] } : f)
+        }))
+        .filter(g => g.filas.length > 0)
+      )
+      setSeleccionados(new Set())
+      setShowConfirmEliminar(false)
+    } catch (e: any) {
+      setErrorFila('Error al eliminar: ' + (e.message || e))
+    } finally {
+      setEliminando(false)
+    }
+  }
+
+  // ── 4. Agregar una ofrenda/diezmo omitida a un registro (fecha) existente ──
+  function abrirAgregar(recordId: number, fecha: string) {
+    setAgregarRecordId(recordId)
+    setAgregarFecha(fecha)
+    setAgregarMiembro(null)
+    setAgregarColumnaId(columnasPorRegistro[recordId]?.[0]?.id ?? null)
+    setAgregarValor('')
+    setAgregarError('')
+    setShowAgregarModal(true)
+  }
+
+  async function confirmarAgregar() {
+    if (!agregarRecordId) return
+    if (!agregarMiembro)   { setAgregarError('Selecciona el miembro que dio la ofrenda.'); return }
+    if (!agregarColumnaId) { setAgregarError('Selecciona el tipo (diezmo, ofrenda, voto...).'); return }
+    const valorNum = parseInt(agregarValor.replace(/[^\d]/g, ''), 10)
+    if (!valorNum || valorNum <= 0) { setAgregarError('Ingresa un valor válido.'); return }
+
+    setAgregando(true); setAgregarError('')
+    try {
+      const filasRecord = grupos.flatMap(g => g.filas).filter(f => f.recordId === agregarRecordId && !f.esIglesia)
+      const ordenSiguiente = new Set(filasRecord.map(f => f.rowId)).size + 1
+
+      const { data: nuevaFilaDB, error: eRow } = await supabase.from('income_rows')
+        .insert({ record_id: agregarRecordId, member_id: agregarMiembro.id, orden: ordenSiguiente })
+        .select('id').single()
+      if (eRow) throw eRow
+
+      const { error: eVal } = await supabase.from('income_values')
+        .insert({ row_id: nuevaFilaDB.id, column_id: agregarColumnaId, monto: valorNum })
+      if (eVal) throw eVal
+
+      const nuevoTotal = filasRecord.reduce((a, f) => a + f.valor, 0) + valorNum
+      const { error: eRec } = await supabase.from('income_records').update({ total: nuevoTotal }).eq('id', agregarRecordId)
+      if (eRec) throw eRec
+
+      const colNombre = columnasPorRegistro[agregarRecordId]?.find(c => c.id === agregarColumnaId)?.nombre || ''
+      const sc  = scDesdeNombre(colNombre)
+      const aux = sc === 15 ? 2 : ''
+
+      const nuevaFilaLibro: FilaLibro = {
+        tc: 1, fecha: agregarFecha, cuenta: 4170, sc, aux,
+        nombre: agregarMiembro.nombre.toUpperCase(), ccNit: agregarMiembro.cedula,
+        descripcion: 'DIEZMOS Y OFRENDAS', valor: valorNum, e: 'CR', esIglesia: false,
+        rowId: nuevaFilaDB.id, recordId: agregarRecordId, columnId: agregarColumnaId,
+      }
+
+      setGrupos(prev => prev.map(g => {
+        if (g.fecha !== agregarFecha) return g
+        const arr = [...g.filas]
+        let insertAt = arr.length
+        for (let i = arr.length - 1; i >= 0; i--) {
+          if (arr[i].recordId === agregarRecordId) { insertAt = i + 1; break }
+        }
+        arr.splice(insertAt, 0, nuevaFilaLibro)
+        return {
+          ...g,
+          filas: arr.map(f => (f.esIglesia && f.recordId === agregarRecordId) ? { ...f, valor: nuevoTotal } : f),
+        }
+      }))
+      setShowAgregarModal(false)
+    } catch (e: any) {
+      setAgregarError('Error al agregar: ' + (e.message || e))
+    } finally {
+      setAgregando(false)
+    }
   }
 
   // ── Exportar Excel (año completo, una hoja por mes) ─────────────────────────
@@ -393,6 +644,7 @@ export default function EstadoIngresosPage() {
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
           nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
           descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
+          recordId: rec.id, columnId: null,
         })
         const recRows = (rByRecord[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
         for (const row of recRows) {
@@ -409,6 +661,7 @@ export default function EstadoIngresosPage() {
               ccNit:       member ? member.cedula : '',
               descripcion: 'DIEZMOS Y OFRENDAS',
               valor: val.monto, e: 'CR', esIglesia: false, rowId: row.id,
+              recordId: rec.id, columnId: val.column_id,
             })
           }
         }
@@ -489,10 +742,27 @@ export default function EstadoIngresosPage() {
         .btn-excel:hover{background:#A8DFC0}
         .btn-excel:disabled{opacity:.5;cursor:not-allowed}
 
-        .btn-actualizar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #C7D9FF;background:#EEF4FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-actualizar:hover{background:#C7D9FF}
-        .btn-actualizar.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
-        .btn-actualizar:disabled{opacity:.5;cursor:not-allowed}
+        .btn-modificar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #C7D9FF;background:#EEF4FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-modificar:hover{background:#C7D9FF}
+        .btn-modificar.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
+        .btn-modificar:disabled{opacity:.5;cursor:not-allowed}
+
+        .btn-eliminar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #FBBCBC;background:#FEE8E8;color:#C0392B;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-eliminar:hover{background:#FBBCBC}
+        .btn-eliminar:disabled{opacity:.5;cursor:not-allowed}
+        .btn-cancelar-sel{display:inline-flex;align-items:center;padding:9px 14px;border-radius:10px;border:1.5px solid #D8E4F8;background:#fff;color:#4A6090;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-cancelar-sel:hover{background:#F0F5FF}
+        .btn-cancelar-sel:disabled{opacity:.5;cursor:not-allowed}
+
+        .row-checkbox{width:15px;height:15px;accent-color:#C0392B;cursor:pointer}
+        .btn-add-row{width:20px;height:20px;border-radius:6px;border:1.5px solid #A8DFC0;background:#E8F8F1;color:#1A7A4A;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;padding:0}
+        .btn-add-row:hover{background:#A8DFC0}
+
+        .modal-field-label{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#4A6090;margin-bottom:5px}
+
+        .edit-valor-input{width:100px;padding:6px 9px;border:1.5px solid #C7D9FF;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s;text-align:right}
+        .edit-valor-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 2px rgba(43,91,191,.15);background:#fff}
+        .edit-valor-input:disabled{opacity:.6}
 
         .edit-banner{margin:14px 24px 0;padding:10px 14px;background:#EEF4FF;border:1.5px solid #C7D9FF;color:#1A3A8F;border-radius:10px;font-size:12px}
 
@@ -516,6 +786,8 @@ export default function EstadoIngresosPage() {
         .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
         .btn-modal-primary{background:#2B5BBF;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
         .btn-modal-primary:hover{background:#1A3A8F}
+        .btn-modal-danger{background:#C0392B;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
+        .btn-modal-danger:hover{background:#A5291D}
         .btn-modal-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
         .btn-modal-ghost:hover{background:#F0F5FF}
 
@@ -584,10 +856,21 @@ export default function EstadoIngresosPage() {
                 <div className="info-total">Total del mes: <strong>${fmt(totalMes)}</strong></div>
               )}
             </div>
-            <div style={{display:'flex',gap:10}}>
-              <button className={`btn-actualizar ${modoEdicion ? 'active' : ''}`} onClick={abrirActualizar} disabled={loading || grupos.length === 0}>
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              {modoEdicion && seleccionados.size > 0 && (
+                <button className="btn-eliminar" onClick={() => setShowConfirmEliminar(true)} disabled={eliminando}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  {eliminando ? 'Eliminando…' : `Eliminar (${seleccionados.size})`}
+                </button>
+              )}
+              {modoEdicion && seleccionados.size > 0 && (
+                <button className="btn-cancelar-sel" onClick={() => setSeleccionados(new Set())} disabled={eliminando}>
+                  Cancelar selección
+                </button>
+              )}
+              <button className={`btn-modificar ${modoEdicion ? 'active' : ''}`} onClick={abrirModificar} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
-                {modoEdicion ? 'Finalizar edición' : 'Actualizar'}
+                {modoEdicion ? 'Finalizar modificación' : 'Modificar'}
               </button>
               <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
@@ -599,7 +882,9 @@ export default function EstadoIngresosPage() {
           {error && <div className="err">{error}</div>}
           {errorFila && <div className="err">{errorFila}</div>}
           {modoEdicion && !loading && grupos.length > 0 && (
-            <div className="edit-banner">Modo edición activo: haz clic en un nombre para reasignar el miembro correcto.</div>
+            <div className="edit-banner">
+              Modo Modificar activo: clic en un nombre para reasignarlo, en un valor para corregirlo, marca la casilla de una fila para eliminarla, o usa el <strong>+</strong> junto a IGLESIA EN MONTERIA para agregar una ofrenda omitida ese día.
+            </div>
           )}
 
           {loading ? (
@@ -611,6 +896,7 @@ export default function EstadoIngresosPage() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{width:34}}></th>
                     <th>TC</th><th>CONS.</th><th>FECHA</th><th>CUENTA</th>
                     <th>SC</th><th>AUX</th>
                     <th style={{textAlign:'left',paddingLeft:10}}>NOMBRE</th>
@@ -623,6 +909,27 @@ export default function EstadoIngresosPage() {
                     <React.Fragment key={gi}>
                       {g.filas.map((f, fi) => (
                         <tr key={`${gi}-${fi}`} className={f.esIglesia ? 'tr-iglesia' : ''}>
+                          <td className="cc">
+                            {modoEdicion && f.esIglesia && (
+                              <button
+                                type="button"
+                                className="btn-add-row"
+                                title="Agregar ofrenda/diezmo omitida a este registro"
+                                onClick={() => abrirAgregar(f.recordId, g.fecha)}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                              </button>
+                            )}
+                            {modoEdicion && !f.esIglesia && f.rowId && (
+                              <input
+                                type="checkbox"
+                                className="row-checkbox"
+                                checked={seleccionados.has(claveFila(f))}
+                                onChange={() => toggleSeleccion(f)}
+                                title="Seleccionar esta ofrenda individual para eliminar"
+                              />
+                            )}
+                          </td>
                           <td className="cc">{f.tc}</td>
                           <td className="cc"></td>
                           <td className="cc">{g.fecha.split('-').reverse().join('/')}</td>
@@ -641,12 +948,20 @@ export default function EstadoIngresosPage() {
                           </td>
                           <td className="cc">{f.ccNit}</td>
                           <td className="cc">{f.descripcion}</td>
-                          <td className={`cr ${f.esIglesia ? 'val-ig' : ''}`}>${fmt(f.valor)}</td>
+                          <td className={`cr ${f.esIglesia ? 'val-ig' : ''}`}>
+                            {modoEdicion && !f.esIglesia && f.rowId ? (
+                              <EditarValorInput
+                                valorActual={f.valor}
+                                saving={guardandoRowId === f.rowId}
+                                onSave={nuevo => actualizarValorFila(f, nuevo)}
+                              />
+                            ) : `$${fmt(f.valor)}`}
+                          </td>
                           <td className={`cc ${!f.esIglesia ? 'ecr' : ''}`}>{f.e}</td>
                         </tr>
                       ))}
                       {gi < grupos.length - 1 && (
-                        <tr className="tr-sep"><td colSpan={11}></td></tr>
+                        <tr className="tr-sep"><td colSpan={12}></td></tr>
                       )}
                     </React.Fragment>
                   ))}
@@ -657,12 +972,14 @@ export default function EstadoIngresosPage() {
         </div>
       </div>
 
-      {/* Modal: contraseña para activar modo edición */}
+      {/* Modal: contraseña para activar el modo Modificar */}
       {showPassModal && (
         <div className="modal-overlay" onClick={() => setShowPassModal(false)}>
           <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-title">Confirmar contraseña</div>
-            <div className="modal-sub">Ingresa la contraseña para poder actualizar quién dio la ofrenda.</div>
+            <div className="modal-sub">
+              Ingresa la contraseña para reasignar miembros, corregir valores, eliminar ofrendas individuales o agregar una omitida.
+            </div>
             {passError && <div className="modal-error">{passError}</div>}
             <input
               type="password"
@@ -676,6 +993,77 @@ export default function EstadoIngresosPage() {
             <div className="modal-actions">
               <button className="btn-modal-ghost" onClick={() => setShowPassModal(false)}>Cancelar</button>
               <button className="btn-modal-primary" onClick={confirmarPassword}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: confirmar eliminación de registros individuales seleccionados */}
+      {showConfirmEliminar && (
+        <div className="modal-overlay" onClick={() => !eliminando && setShowConfirmEliminar(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Confirmar eliminación</div>
+            <div className="modal-sub">
+              Vas a eliminar {seleccionados.size} registro(s) individual(es). El total del día se recalculará automáticamente, y si un registro se queda sin ninguna ofrenda, desaparecerá por completo. Esta acción no se puede deshacer.
+            </div>
+            {errorFila && <div className="modal-error">{errorFila}</div>}
+            <div className="modal-actions">
+              <button className="btn-modal-ghost" onClick={() => setShowConfirmEliminar(false)} disabled={eliminando}>Cancelar</button>
+              <button className="btn-modal-danger" onClick={eliminarSeleccionados} disabled={eliminando}>
+                {eliminando ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: agregar una ofrenda/diezmo omitida a un registro existente */}
+      {showAgregarModal && (
+        <div className="modal-overlay" onClick={() => !agregando && setShowAgregarModal(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Agregar ofrenda omitida</div>
+            <div className="modal-sub">
+              Registro del {agregarFecha.split('-').reverse().join('/')}. Agrega el aporte de un miembro que no quedó registrado ese día.
+            </div>
+            {agregarError && <div className="modal-error">{agregarError}</div>}
+
+            <div className="modal-field-label">Miembro</div>
+            <EditarNombreInput
+              valorActual={agregarMiembro?.nombre || ''}
+              members={members}
+              saving={agregando}
+              onSelect={m => setAgregarMiembro(m)}
+            />
+
+            <div className="modal-field-label" style={{marginTop:12}}>Tipo</div>
+            <select
+              className="modal-input"
+              value={agregarColumnaId ?? ''}
+              disabled={agregando}
+              onChange={e => setAgregarColumnaId(Number(e.target.value))}
+            >
+              {(agregarRecordId ? columnasPorRegistro[agregarRecordId] : [])?.map(c => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
+              ))}
+            </select>
+
+            <div className="modal-field-label" style={{marginTop:12}}>Valor</div>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="modal-input"
+              placeholder="Ej: 50000"
+              value={agregarValor}
+              disabled={agregando}
+              onChange={e => setAgregarValor(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmarAgregar()}
+            />
+
+            <div className="modal-actions">
+              <button className="btn-modal-ghost" onClick={() => setShowAgregarModal(false)} disabled={agregando}>Cancelar</button>
+              <button className="btn-modal-primary" onClick={confirmarAgregar} disabled={agregando}>
+                {agregando ? 'Agregando…' : 'Agregar'}
+              </button>
             </div>
           </div>
         </div>

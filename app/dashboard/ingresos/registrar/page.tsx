@@ -6,9 +6,10 @@ import { supabase } from '@/lib/supabase'
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface Column  { id: string; nombre: string; codigoPUC: string }
 interface Row     { id: string; nombre: string; memberId: number | null; valores: Record<string, number> }
+interface Tramo    { id: string; porcentaje: number; baseId: string }
 interface DistItem {
   id: string; concepto: string
-  porcentaje: number | string; esFijo: boolean
+  esFijo: boolean; tramos: Tramo[]
   montoCalculado: number; montoAproximado: number
 }
 interface Member { id: number; nombre: string; cedula: string }
@@ -57,11 +58,15 @@ const DEFAULT_COLS: Column[] = [
 ]
 
 function defaultDist(): DistItem[] {
+  const vaColId = DEFAULT_COLS[2].id // Voto Arriendo
   return [
-    { id: uid(), concepto: 'Diezmo de Diezmo',           porcentaje: 'especial', esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
-    { id: uid(), concepto: 'Cuidado Hno. Julio Sánchez',  porcentaje: 10,          esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
-    { id: uid(), concepto: 'Ofrenda Obrero (Luis Álvarez)',porcentaje: 10,         esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
-    { id: uid(), concepto: 'Necesidades diversas',        porcentaje: 10,         esFijo: true,  montoCalculado: 0, montoAproximado: 0 },
+    { id: uid(), concepto: 'Diezmo de Diezmo', esFijo: true, tramos: [
+        { id: uid(), porcentaje: 20, baseId: 'sinVA' },
+        { id: uid(), porcentaje: 10, baseId: 'col:' + vaColId },
+      ], montoCalculado: 0, montoAproximado: 0 },
+    { id: uid(), concepto: 'Cuidado Hno. Julio Sánchez',   esFijo: true, tramos: [{ id: uid(), porcentaje: 10, baseId: 'sinVA' }], montoCalculado: 0, montoAproximado: 0 },
+    { id: uid(), concepto: 'Ofrenda Obrero (Luis Álvarez)', esFijo: true, tramos: [{ id: uid(), porcentaje: 10, baseId: 'sinVA' }], montoCalculado: 0, montoAproximado: 0 },
+    { id: uid(), concepto: 'Necesidades diversas',          esFijo: true, tramos: [{ id: uid(), porcentaje: 10, baseId: 'sinVA' }], montoCalculado: 0, montoAproximado: 0 },
   ]
 }
 
@@ -74,15 +79,27 @@ function calcTotales(cols: Column[], rows: Row[]) {
   return { porCol, general }
 }
 
-function calcDist(items: DistItem[], cols: Column[], rows: Row[]): DistItem[] {
+// Bases disponibles para calcular un porcentaje: total general, total sin V.A., o cualquier columna puntual
+function calcBases(cols: Column[], rows: Row[]): Record<string, number> {
   const { porCol, general } = calcTotales(cols, rows)
   const vaCol = cols.find(c => c.nombre.toLowerCase().includes('voto'))
   const va    = vaCol ? (porCol[vaCol.id] || 0) : 0
-  const sinVA = general - va
+  const bases: Record<string, number> = { general, sinVA: general - va }
+  cols.forEach(c => { bases['col:' + c.id] = porCol[c.id] || 0 })
+  return bases
+}
+
+function baseLabel(baseId: string, cols: Column[]): string {
+  if (baseId === 'general') return 'Total general'
+  if (baseId === 'sinVA')   return 'Total (sin V.A.)'
+  const col = cols.find(c => 'col:' + c.id === baseId)
+  return col ? col.nombre : 'Columna eliminada'
+}
+
+function calcDist(items: DistItem[], cols: Column[], rows: Row[]): DistItem[] {
+  const bases = calcBases(cols, rows)
   return items.map(item => {
-    const mc = item.porcentaje === 'especial'
-      ? Math.round(sinVA * 0.20 + va * 0.10)
-      : Math.round(sinVA * (Number(item.porcentaje) / 100))
+    const mc = item.tramos.reduce((sum, t) => sum + Math.round((bases[t.baseId] || 0) * (t.porcentaje / 100)), 0)
     return { ...item, montoCalculado: mc }
   })
 }
@@ -200,6 +217,11 @@ export default function RegistrarIngreso() {
   const [nuevoMiembroSaving, setNuevoMiembroSaving] = useState(false)
   const [nuevoMiembroError,  setNuevoMiembroError]  = useState('')
 
+  // Interfaz: pestañas y popover de agregar columna
+  const [tab,         setTab]         = useState<'tabla' | 'distribucion'>('tabla')
+  const [showAddCol,  setShowAddCol]  = useState(false)
+  const [editingDistId, setEditingDistId] = useState<string | null>(null)
+
   // Cargar miembros activos
   useEffect(() => {
     supabase
@@ -222,6 +244,7 @@ export default function RegistrarIngreso() {
     setCols(next)
     setDist(d => refreshDist(next, rows, d))
     setNewNombre(''); setNewPUC('')
+    setShowAddCol(false)
   }
 
   function eliminarColumna(cid: string) {
@@ -306,8 +329,8 @@ export default function RegistrarIngreso() {
   function agregarConcepto() {
     if (!newConcepto.trim() || !newPorcentaje) return
     const item: DistItem = {
-      id: uid(), concepto: newConcepto.trim(),
-      porcentaje: parseFloat(newPorcentaje), esFijo: false,
+      id: uid(), concepto: newConcepto.trim(), esFijo: false,
+      tramos: [{ id: uid(), porcentaje: parseFloat(newPorcentaje) || 0, baseId: 'sinVA' }],
       montoCalculado: 0, montoAproximado: 0
     }
     setDist(calcDist([...dist, item], cols, rows))
@@ -319,13 +342,37 @@ export default function RegistrarIngreso() {
   }
 
   function setAproximado(id: string, val: string) {
-    const n = parseInt(val) || 0
+    const n = parseInt(val.replace(/\D/g,'')) || 0
     setDist(d => d.map(i => i.id === id ? { ...i, montoAproximado: n } : i))
   }
 
-  function setPorcentaje(id: string, val: string) {
+  function setDistConcepto(id: string, val: string) {
+    setDist(d => d.map(i => i.id === id ? { ...i, concepto: val } : i))
+  }
+
+  function setTramoPorcentaje(itemId: string, tramoId: string, val: string) {
     const n = parseFloat(val) || 0
-    setDist(d => calcDist(d.map(i => i.id === id ? { ...i, porcentaje: n } : i), cols, rows))
+    setDist(d => calcDist(d.map(i => i.id === itemId
+      ? { ...i, tramos: i.tramos.map(t => t.id === tramoId ? { ...t, porcentaje: n } : t) }
+      : i), cols, rows))
+  }
+
+  function setTramoBase(itemId: string, tramoId: string, baseId: string) {
+    setDist(d => calcDist(d.map(i => i.id === itemId
+      ? { ...i, tramos: i.tramos.map(t => t.id === tramoId ? { ...t, baseId } : t) }
+      : i), cols, rows))
+  }
+
+  function agregarTramo(itemId: string) {
+    setDist(d => calcDist(d.map(i => i.id === itemId
+      ? { ...i, tramos: [...i.tramos, { id: uid(), porcentaje: 0, baseId: 'sinVA' }] }
+      : i), cols, rows))
+  }
+
+  function eliminarTramo(itemId: string, tramoId: string) {
+    setDist(d => calcDist(d.map(i => i.id === itemId && i.tramos.length > 1
+      ? { ...i, tramos: i.tramos.filter(t => t.id !== tramoId) }
+      : i), cols, rows))
   }
 
   // ── Totales ────────────────────────────────────────────────────────────
@@ -374,7 +421,7 @@ export default function RegistrarIngreso() {
       // 4. Distribución
       const distInsert = dist.map(d => ({
         record_id: rec.id, concepto: d.concepto,
-        porcentaje: d.porcentaje === 'especial' ? -1 : Number(d.porcentaje),
+        porcentaje: d.tramos.reduce((s, t) => s + t.porcentaje, 0),
         monto_aproximado: d.montoAproximado, es_fijo: d.esFijo
       }))
       const { error: e5 } = await supabase.from('income_distribution').insert(distInsert)
@@ -632,7 +679,7 @@ export default function RegistrarIngreso() {
     })
     dist.forEach((item, i) => {
       const rowNum = i + 5
-      const pLabel = item.porcentaje === 'especial' ? '20% Total (sin V.A.) + 10% V.A.' : item.porcentaje + '%'
+      const pLabel = item.tramos.map(t => `${t.porcentaje}% ${baseLabel(t.baseId, cols)}`).join(' + ')
       dataCell(ws3.getCell(rowNum,1), item.concepto, undefined, item.esFijo)
       dataCell(ws3.getCell(rowNum,2), pLabel, undefined, false, 'center')
       dataCell(ws3.getCell(rowNum,3), item.montoCalculado, '0,##0', false, 'right')
@@ -680,28 +727,53 @@ export default function RegistrarIngreso() {
         *{margin:0;padding:0;box-sizing:border-box}
         .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif}
 
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:50}
+        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:60px;display:flex;align-items:center;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:60}
         .top-left{display:flex;align-items:center;gap:14px}
         .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:36px;height:36px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
         .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65)}
+        .top-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#fff}
+        .top-subtitle{font-size:11px;color:rgba(255,255,255,.65)}
 
-        .content{max-width:1100px;margin:0 auto;padding:32px 24px}
+        /* Barra compacta fija: fecha + total en vivo */
+        .sticky-bar{position:sticky;top:60px;z-index:55;background:#fff;border-bottom:1.5px solid #D8E4F8;box-shadow:0 2px 12px rgba(43,91,191,.06)}
+        .sticky-bar-inner{max-width:1100px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+        .sticky-fecha{display:flex;align-items:center;gap:10px}
+        .fecha-input{padding:8px 12px;border:1.5px solid #D8E4F8;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;outline:none;transition:border .2s}
+        .fecha-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
+        .sticky-fecha-hint{font-size:11px;color:#8A9CC0}
+        .sticky-total{display:flex;align-items:baseline;gap:8px}
+        .sticky-total-label{font-size:11px;color:#8A9CC0;text-transform:uppercase;letter-spacing:.05em}
+        .sticky-total-value{font-family:'DM Sans',sans-serif;font-size:22px;font-weight:700;color:#1A3A8F}
+
+        .content{max-width:1100px;margin:0 auto;padding:20px 24px 32px}
 
         .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 16px rgba(43,91,191,.08);margin-bottom:20px}
         .card-title{font-size:13px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;gap:8px}
         .card-title svg{color:#2B5BBF}
 
-        .fecha-wrap{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-        .fecha-input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s}
-        .fecha-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
+        /* Pestañas Tabla / Distribución */
+        .tabs-row{display:flex;gap:6px;margin-bottom:16px;background:#F0F5FF;padding:4px;border-radius:11px;width:fit-content}
+        .tab-btn{padding:8px 18px;border:none;border-radius:8px;background:transparent;color:#4A6090;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px}
+        .tab-btn.active{background:#fff;color:#1A3A8F;box-shadow:0 2px 8px rgba(43,91,191,.12)}
+        .tab-badge{background:#EEF4FF;color:#2B5BBF;font-size:10px;padding:1px 7px;border-radius:100px;font-weight:600}
+        .tab-btn.active .tab-badge{background:#2B5BBF;color:#fff}
 
-        .add-col-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+        .table-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+        .table-card-title{font-size:13px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+        .table-card-title svg{color:#2B5BBF}
+        .table-card-actions{display:flex;gap:8px;align-items:center}
+
+
+        .popover-addcol{position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1.5px solid #D8E4F8;border-radius:14px;box-shadow:0 12px 32px rgba(43,91,191,.18);padding:18px;z-index:120;width:280px}
+        .popover-addcol .field-wrap{margin-bottom:12px}
+        .popover-addcol-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+
         .field-wrap{display:flex;flex-direction:column;gap:5px}
         .field-label{font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase}
-        .text-input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;min-width:180px}
+        .text-input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;width:100%;min-width:0}
         .text-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
+
+        .add-col-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
 
         .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
         .btn-primary{background:#2B5BBF;color:#fff;box-shadow:0 3px 12px rgba(43,91,191,.25)}
@@ -716,6 +788,17 @@ export default function RegistrarIngreso() {
         .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
         .btn-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8}
         .btn-ghost:hover{background:#F0F5FF}
+
+        /* Acciones secundarias: agregar (discreto) y eliminar (ícono) */
+        .btn-add-secondary{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:9px;border:1.5px dashed #B9CDF5;background:#F5F8FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:all .2s}
+        .btn-add-secondary:hover{background:#EEF4FF;border-style:solid}
+        .btn-icon-x{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:#B0B8CC;border-radius:6px;cursor:pointer;transition:all .15s;flex-shrink:0}
+        .btn-icon-x:hover{background:#FEE8E8;color:#C0392B}
+        .btn-icon-x:disabled{opacity:.35;cursor:not-allowed}
+        .icon-group{display:flex;border:1.5px solid #D8E4F8;border-radius:10px;overflow:hidden}
+        .icon-group button{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border:none;background:#fff;color:#4A6090;cursor:pointer;transition:background .2s}
+        .icon-group button:not(:last-child){border-right:1.5px solid #D8E4F8}
+        .icon-group button:hover{background:#F0F5FF;color:#2B5BBF}
 
         .btn-add-member{flex-shrink:0;width:38px;height:38px;border-radius:8px;border:1.5px dashed #B9CDF5;background:#F5F8FF;color:#2B5BBF;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
         .btn-add-member:hover{background:#EEF4FF;border-color:#2B5BBF;border-style:solid}
@@ -749,10 +832,8 @@ export default function RegistrarIngreso() {
         .autocomplete-nombre{font-size:13px;font-weight:500;color:#0F2560}
         .autocomplete-cedula{font-size:11px;color:#8A9CC0}
 
-        .total-banner{background:linear-gradient(135deg,#1A3A8F,#2B5BBF);border-radius:14px;padding:20px 24px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-        .total-label{font-size:13px;color:rgba(255,255,255,.7);margin-bottom:4px}
-        .total-value{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:#fff}
-        .total-puc{font-size:11px;color:rgba(255,255,255,.5)}
+        .letras-line{margin-top:14px;padding:10px 14px;background:#F8FAFF;border:1px solid #E8EFFD;border-radius:10px;font-size:12px;color:#4A6090;font-style:italic}
+        .letras-line strong{color:#0F2560;font-style:normal;font-weight:500}
 
         .dist-porcentaje{font-size:12px;color:#8A9CC0}
         .dist-monto{color:#2B5BBF;font-weight:500}
@@ -760,16 +841,31 @@ export default function RegistrarIngreso() {
         .saldo-pos{color:#1A7A4A;font-weight:700}
         .saldo-neg{color:#C0392B;font-weight:700}
 
-        .actions-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;margin-top:8px}
+        .text-input-sm-plain{width:100%;padding:7px 9px;border:1.5px solid transparent;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;color:#0F2560;outline:none;background:transparent;transition:all .2s}
+        .text-input-sm-plain:hover{background:#FAFCFF;border-color:#E8EFFD}
+        .text-input-sm-plain:focus{background:#fff;border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
+        .tramo-row{display:flex;align-items:center;gap:6px}
+        .tramo-pct{width:56px;flex-shrink:0;padding:6px 7px;font-size:12px}
+        .tramo-base{padding:6px 8px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:11px;color:#4A6090;background:#FAFCFF;outline:none;flex:1;min-width:0;cursor:pointer}
+        .tramo-base:focus{border-color:#2B5BBF}
+        .btn-add-tramo{align-self:flex-start;background:none;border:none;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:2px}
+        .btn-add-tramo:hover{color:#1A3A8F}
+        .pct-summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:8px;transition:background .15s}
+        .pct-summary:hover{background:#F8FAFF}
+        .pct-summary span{font-size:12px;color:#4A6090}
+        .btn-edit-pct{width:22px;height:22px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;border:none;background:#F0F5FF;color:#2B5BBF;border-radius:6px;cursor:pointer;transition:all .15s}
+        .btn-edit-pct:hover{background:#2B5BBF;color:#fff}
+
+        .actions-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-top:8px}
 
         .alert-success{background:#E8F8F1;border:1.5px solid #A8DFC0;color:#1A7A4A;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
         .alert-error{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
 
-        @media(max-width:768px){.content{padding:16px}.add-col-row{flex-direction:column}.actions-row{justify-content:stretch}.actions-row .btn{flex:1;justify-content:center}}
+        @media(max-width:768px){.content{padding:16px}.add-col-row{flex-direction:column}.actions-row{justify-content:stretch}.actions-row .btn{flex:1;justify-content:center}.sticky-bar-inner{padding:10px 16px}.top-bar{padding:0 16px}}
         @keyframes spin{to{transform:rotate(360deg)}}
       `}</style>
 
-      {/* Top bar */}
+      {/* Top bar — solo identidad, sin acciones (van abajo) */}
       <div className="top-bar">
         <div className="top-left">
           <button className="back-btn" onClick={() => router.push('/dashboard')}>
@@ -780,21 +876,19 @@ export default function RegistrarIngreso() {
             <div className="top-subtitle">Iglesia en Montería</div>
           </div>
         </div>
-        <div style={{display:'flex',gap:10}}>
-          <button className="btn btn-pdf" onClick={generarPDF}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            Comprobante
-          </button>
-          <button className="btn btn-success" style={{background:'#E8F8F1',color:'#1A7A4A',border:'1.5px solid #A8DFC0'}} onClick={generarExcel}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            Excel
-          </button>
-          <button className="btn btn-primary" onClick={guardar} disabled={saving}>
-            {saving
-              ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{animation:'spin .7s linear infinite'}}><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg>Guardando...</>
-              : <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Guardar</>
-            }
-          </button>
+      </div>
+
+      {/* Barra compacta fija: fecha + total en vivo, siempre visible */}
+      <div className="sticky-bar">
+        <div className="sticky-bar-inner">
+          <div className="sticky-fecha">
+            <input type="date" className="fecha-input" value={fecha} onChange={e => setFecha(e.target.value)}/>
+            <span className="sticky-fecha-hint">Fecha del registro</span>
+          </div>
+          <div className="sticky-total">
+            <span className="sticky-total-label">Total</span>
+            <span className="sticky-total-value">${fmt(general)}</span>
+          </div>
         </div>
       </div>
 
@@ -802,229 +896,267 @@ export default function RegistrarIngreso() {
         {saved && <div className="alert-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>Registro guardado exitosamente en Supabase.</div>}
         {error && <div className="alert-error"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>{error}</div>}
 
-        {/* Fecha */}
-        <div className="card">
-          <div className="card-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            Fecha del registro
-          </div>
-          <div className="fecha-wrap">
-            <input type="date" className="fecha-input" value={fecha} onChange={e => setFecha(e.target.value)}/>
-            <span style={{fontSize:13,color:'#8A9CC0'}}>Puedes usar la misma fecha para varios registros del día</span>
-          </div>
+        {/* Pestañas: Tabla de ingresos protagonista / Distribución aparte */}
+        <div className="tabs-row">
+          <button className={`tab-btn ${tab === 'tabla' ? 'active' : ''}`} onClick={() => setTab('tabla')}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            Aportantes
+            <span className="tab-badge">{rows.length}</span>
+          </button>
+          <button className={`tab-btn ${tab === 'distribucion' ? 'active' : ''}`} onClick={() => setTab('distribucion')}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Distribución
+          </button>
         </div>
 
-        {/* Agregar columna */}
-        <div className="card">
-          <div className="card-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Agregar columna
-          </div>
-          <div className="add-col-row">
-            <div className="field-wrap">
-              <span className="field-label">Nombre</span>
-              <input className="text-input" placeholder="Ej: Misiones" value={newNombre} onChange={e => setNewNombre(e.target.value)}/>
-            </div>
-            <div className="field-wrap">
-              <span className="field-label">Código P.U.C.</span>
-              <input className="text-input" placeholder="Ej: 4170-20" style={{minWidth:140}} value={newPUC} onChange={e => setNewPUC(e.target.value)} onKeyDown={e => e.key==='Enter' && agregarColumna()}/>
-            </div>
-            <button className="btn btn-primary" onClick={agregarColumna}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Agregar
-            </button>
-          </div>
-        </div>
-
-        {/* Tabla de ingresos */}
-        <div className="card">
-          <div className="card-title" style={{justifyContent:'space-between'}}>
-            <span style={{display:'flex',alignItems:'center',gap:8}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-              Tabla de ingresos
-            </span>
-            <button className="btn btn-primary btn-sm" onClick={agregarFila}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Agregar fila
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style={{minWidth:190}}>
-                    <div className="col-header">
-                      <span>A nombre de</span>
-                      <span className="col-puc">miembro / aportante</span>
+        {/* ── Tab: Tabla de ingresos (protagonista) ────────────────────────── */}
+        {tab === 'tabla' && (
+          <div className="card">
+            <div className="table-card-head">
+              <span className="table-card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+                Tabla de ingresos
+              </span>
+              <div className="table-card-actions">
+                <div style={{position:'relative'}}>
+                  <button className="btn-add-secondary" onClick={() => setShowAddCol(v => !v)}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Columna
+                  </button>
+                  {showAddCol && (
+                    <div className="popover-addcol" onMouseLeave={() => setShowAddCol(false)}>
+                      <div className="field-wrap">
+                        <span className="field-label">Nombre</span>
+                        <input className="text-input" placeholder="Ej: Misiones" value={newNombre} onChange={e => setNewNombre(e.target.value)} autoFocus/>
+                      </div>
+                      <div className="field-wrap">
+                        <span className="field-label">Código P.U.C.</span>
+                        <input className="text-input" placeholder="Ej: 4170-20" value={newPUC} onChange={e => setNewPUC(e.target.value)} onKeyDown={e => e.key==='Enter' && agregarColumna()}/>
+                      </div>
+                      <div className="popover-addcol-actions">
+                        <button className="btn btn-ghost btn-sm" onClick={() => setShowAddCol(false)}>Cancelar</button>
+                        <button className="btn btn-primary btn-sm" onClick={agregarColumna}>Agregar</button>
+                      </div>
                     </div>
-                  </th>
-                  <th style={{width:40}}>#</th>
-                  {cols.map(c => (
-                    <th key={c.id}>
+                  )}
+                </div>
+                <button className="btn-add-secondary" onClick={agregarFila}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Agregar fila
+                </button>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{minWidth:190}}>
                       <div className="col-header">
-                        <span>{c.nombre}</span>
-                        <span className="col-puc">{c.codigoPUC}</span>
-                        <button className="btn btn-danger btn-sm" style={{marginTop:4,padding:'2px 8px',fontSize:11}} onClick={() => eliminarColumna(c.id)}>✕</button>
+                        <span>A nombre de</span>
+                        <span className="col-puc">miembro / aportante</span>
                       </div>
                     </th>
-                  ))}
-                  <th style={{width:40}}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, i) => (
-                  <tr key={row.id}>
-                    <td>
-                      <div style={{display:'flex',gap:6,alignItems:'flex-start'}}>
-                        {/* ✅ FIX: prop unificada onUpdate en lugar de onChange + onSelect separados */}
-                        <AutocompleteInput
-                          value={row.nombre}
-                          memberId={row.memberId}
-                          members={members}
-                          onUpdate={patch => updateRow(row.id, patch)}
-                        />
-                        <button
-                          type="button"
-                          className="btn-add-member"
-                          title="Agregar nuevo miembro"
-                          onClick={() => abrirNuevoMiembro(row.id, row.nombre)}
-                        >+</button>
-                      </div>
-                    </td>
-                    <td style={{textAlign:'center',color:'#8A9CC0',fontSize:12}}>{i+1}</td>
+                    <th style={{width:40}}>#</th>
                     {cols.map(c => (
-                      <td key={c.id}>
+                      <th key={c.id}>
+                        <div className="col-header">
+                          <span>{c.nombre}</span>
+                          <span className="col-puc">{c.codigoPUC}</span>
+                          <button className="btn-icon-x" onClick={() => eliminarColumna(c.id)} title="Eliminar columna" aria-label="Eliminar columna">✕</button>
+                        </div>
+                      </th>
+                    ))}
+                    <th style={{width:40}}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, i) => (
+                    <tr key={row.id}>
+                      <td>
+                        <div style={{display:'flex',gap:6,alignItems:'flex-start'}}>
+                          <AutocompleteInput
+                            value={row.nombre}
+                            memberId={row.memberId}
+                            members={members}
+                            onUpdate={patch => updateRow(row.id, patch)}
+                          />
+                          <button
+                            type="button"
+                            className="btn-add-member"
+                            title="Agregar nuevo miembro"
+                            onClick={() => abrirNuevoMiembro(row.id, row.nombre)}
+                          >+</button>
+                        </div>
+                      </td>
+                      <td style={{textAlign:'center',color:'#8A9CC0',fontSize:12}}>{i+1}</td>
+                      {cols.map(c => (
+                        <td key={c.id}>
+                          <input
+                            className="num-input"
+                            type="text" inputMode="numeric"
+                            value={row.valores[c.id] ? fmt(row.valores[c.id]) : ''}
+                            placeholder="0"
+                            onChange={e => setValor(row.id, c.id, e.target.value)}
+                          />
+                        </td>
+                      ))}
+                      <td>
+                        <button className="btn-icon-x" onClick={() => eliminarFila(row.id)} disabled={rows.length<=1} title="Eliminar fila" aria-label="Eliminar fila">✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td/>
+                    <td style={{textAlign:'center',fontSize:12}}>Total</td>
+                    {cols.map(c => (
+                      <td key={c.id} style={{textAlign:'right'}}>${fmt(porCol[c.id])}</td>
+                    ))}
+                    <td/>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="letras-line">La suma de <strong>${fmt(general)}</strong> en letras: {numeroALetras(general)}</div>
+          </div>
+        )}
+
+        {/* ── Tab: Distribución (uso ocasional, fuera del camino principal) ── */}
+        {tab === 'distribucion' && (
+          <div className="card">
+            <div className="card-title" style={{justifyContent:'space-between'}}>
+              <span style={{display:'flex',alignItems:'center',gap:8}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Distribución de ingresos
+              </span>
+            </div>
+            <div className="add-col-row" style={{marginBottom:16}}>
+              <div className="field-wrap">
+                <span className="field-label">Concepto</span>
+                <input className="text-input" placeholder="Ej: Fondo construcción" value={newConcepto} onChange={e => setNewConcepto(e.target.value)}/>
+              </div>
+              <div className="field-wrap">
+                <span className="field-label">Porcentaje %</span>
+                <input className="text-input" type="number" min="0" max="100" placeholder="Ej: 5" style={{minWidth:120}} value={newPorcentaje} onChange={e => setNewPorcentaje(e.target.value)}/>
+              </div>
+              <button className="btn-add-secondary" onClick={agregarConcepto} style={{alignSelf:'flex-end',height:42}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Agregar
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Concepto</th><th>Porcentaje</th><th>Monto calculado</th><th>Aproximado</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dist.map(item => (
+                    <tr key={item.id}>
+                      <td style={{minWidth:170}}>
                         <input
-                          className="num-input"
-                          type="number" min="0"
-                          value={row.valores[c.id] || ''}
-                          placeholder="0"
-                          onChange={e => setValor(row.id, c.id, e.target.value)}
+                          className="text-input-sm-plain"
+                          value={item.concepto}
+                          onChange={e => setDistConcepto(item.id, e.target.value)}
                         />
                       </td>
-                    ))}
-                    <td>
-                      <button className="btn btn-danger btn-sm" onClick={() => eliminarFila(row.id)} disabled={rows.length<=1}>✕</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td/>
-                  <td style={{textAlign:'center',fontSize:12}}>Total</td>
-                  {cols.map(c => (
-                    <td key={c.id} style={{textAlign:'right'}}>${fmt(porCol[c.id])}</td>
+                      <td style={{minWidth:230}}>
+                        {editingDistId === item.id ? (
+                          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                            {item.tramos.map(t => (
+                              <div key={t.id} className="tramo-row">
+                                <input
+                                  className="num-input tramo-pct"
+                                  type="number" min="0" max="100"
+                                  value={String(t.porcentaje)}
+                                  onChange={e => setTramoPorcentaje(item.id, t.id, e.target.value)}
+                                />
+                                <span style={{fontSize:11,color:'#8A9CC0'}}>% de</span>
+                                <select
+                                  className="tramo-base"
+                                  value={t.baseId}
+                                  onChange={e => setTramoBase(item.id, t.id, e.target.value)}
+                                >
+                                  <option value="general">Total general</option>
+                                  <option value="sinVA">Total (sin V.A.)</option>
+                                  {cols.map(c => (
+                                    <option key={c.id} value={'col:' + c.id}>{c.nombre}</option>
+                                  ))}
+                                </select>
+                                {item.tramos.length > 1 && (
+                                  <button className="btn-icon-x" style={{width:20,height:20}} onClick={() => eliminarTramo(item.id, t.id)} title="Quitar tramo" aria-label="Quitar tramo">✕</button>
+                                )}
+                              </div>
+                            ))}
+                            <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                              <button className="btn-add-tramo" onClick={() => agregarTramo(item.id)}>+ agregar tramo</button>
+                              <button className="btn-add-tramo" style={{color:'#1A7A4A'}} onClick={() => setEditingDistId(null)}>Listo</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="pct-summary" onClick={() => setEditingDistId(item.id)}>
+                            <span>{item.tramos.map(t => `${t.porcentaje}% ${baseLabel(t.baseId, cols)}`).join(' + ')}</span>
+                            <button className="btn-edit-pct" title="Editar porcentaje" aria-label="Editar porcentaje" onClick={e => { e.stopPropagation(); setEditingDistId(item.id) }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="dist-monto" style={{textAlign:'right'}}>${fmt(item.montoCalculado)}</td>
+                      <td>
+                        <input className="num-input" type="text" inputMode="numeric" placeholder="0"
+                          value={item.montoAproximado ? fmt(item.montoAproximado) : ''}
+                          onChange={e => setAproximado(item.id, e.target.value)}
+                          style={{width:110}}
+                        />
+                      </td>
+                      <td>
+                        {item.esFijo
+                          ? <span className="dist-fijo">Fijo</span>
+                          : <button className="btn-icon-x" onClick={() => eliminarConcepto(item.id)} title="Eliminar concepto" aria-label="Eliminar concepto">✕</button>
+                        }
+                      </td>
+                    </tr>
                   ))}
-                  <td/>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-
-        {/* Total general */}
-        <div className="total-banner">
-          <div>
-            <div className="total-label">Caja General (1105-05)</div>
-            <div className="total-value">${fmt(general)}</div>
-          </div>
-          <div style={{textAlign:'right'}}>
-            <div className="total-puc">Total en letras</div>
-            <div style={{fontSize:13,color:'rgba(255,255,255,.8)',maxWidth:300,textAlign:'right'}}>{numeroALetras(general)}</div>
-          </div>
-        </div>
-
-        {/* Distribución */}
-        <div className="card">
-          <div className="card-title" style={{justifyContent:'space-between'}}>
-            <span style={{display:'flex',alignItems:'center',gap:8}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Distribución de ingresos
-            </span>
-          </div>
-          <div className="add-col-row" style={{marginBottom:16}}>
-            <div className="field-wrap">
-              <span className="field-label">Concepto</span>
-              <input className="text-input" placeholder="Ej: Fondo construcción" value={newConcepto} onChange={e => setNewConcepto(e.target.value)}/>
-            </div>
-            <div className="field-wrap">
-              <span className="field-label">Porcentaje %</span>
-              <input className="text-input" type="number" min="0" max="100" placeholder="Ej: 5" style={{minWidth:120}} value={newPorcentaje} onChange={e => setNewPorcentaje(e.target.value)}/>
-            </div>
-            <button className="btn btn-primary" onClick={agregarConcepto}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Agregar
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Concepto</th><th>Porcentaje</th><th>Monto calculado</th><th>Aproximado</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {dist.map(item => (
-                  <tr key={item.id}>
-                    <td style={{fontWeight:500,color:'#0F2560'}}>{item.concepto}</td>
-                    <td>
-                      {item.esFijo
-                        ? <span className="dist-porcentaje">{item.porcentaje === 'especial' ? '20% Total (sin V.A.) + 10% V.A.' : `${item.porcentaje}%`}</span>
-                        : <input className="num-input" type="number" min="0" max="100" value={String(item.porcentaje)} style={{width:80}} onChange={e => setPorcentaje(item.id, e.target.value)}/>
-                      }
-                    </td>
-                    <td className="dist-monto" style={{textAlign:'right'}}>${fmt(item.montoCalculado)}</td>
-                    <td>
-                      <input className="num-input" type="number" min="0" placeholder="0"
-                        value={item.montoAproximado || ''}
-                        onChange={e => setAproximado(item.id, e.target.value)}
-                        style={{width:110}}
-                      />
-                    </td>
-                    <td>
-                      {item.esFijo
-                        ? <span className="dist-fijo">Fijo</span>
-                        : <button className="btn btn-danger btn-sm" onClick={() => eliminarConcepto(item.id)}>✕</button>
-                      }
-                    </td>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}><strong>Total distribución</strong></td>
+                    <td style={{textAlign:'right'}}><strong>${fmt(totalDist)}</strong></td>
+                    <td/>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={3}><strong>Total distribución</strong></td>
-                  <td style={{textAlign:'right'}}><strong>${fmt(totalDist)}</strong></td>
-                  <td/>
-                </tr>
-                <tr>
-                  <td colSpan={3}><strong>Saldo restante</strong></td>
-                  <td style={{textAlign:'right'}} className={saldo >= 0 ? 'saldo-pos' : 'saldo-neg'}>
-                    <strong>${fmt(saldo)}</strong>
-                  </td>
-                  <td/>
-                </tr>
-              </tfoot>
-            </table>
+                  <tr>
+                    <td colSpan={3}><strong>Saldo restante</strong></td>
+                    <td style={{textAlign:'right'}} className={saldo >= 0 ? 'saldo-pos' : 'saldo-neg'}>
+                      <strong>${fmt(saldo)}</strong>
+                    </td>
+                    <td/>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Acciones */}
         <div className="actions-row">
-          <button className="btn btn-pdf" onClick={generarPDF}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            Imprimir Comprobante
-          </button>
-          <button className="btn btn-success" style={{background:'#E8F8F1',color:'#1A7A4A',border:'1.5px solid #A8DFC0'}} onClick={generarExcel}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            Exportar Excel
-          </button>
-          <button className="btn btn-success" onClick={guardar} disabled={saving}>
-            {saving ? 'Guardando...' : <>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              Guardar registro
-            </>}
-          </button>
+          <div className="icon-group">
+            <button onClick={generarPDF} title="Imprimir comprobante" aria-label="Imprimir comprobante">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </button>
+            <button onClick={generarExcel} title="Exportar a Excel" aria-label="Exportar a Excel">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+            </button>
+          </div>
+          {tab === 'distribucion' && (
+            <button className="btn btn-primary" onClick={guardar} disabled={saving}>
+              {saving ? 'Guardando...' : 'Guardar registro'}
+            </button>
+          )}
         </div>
       </div>
 
