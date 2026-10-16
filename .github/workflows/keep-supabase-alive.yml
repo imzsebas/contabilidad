@@ -1,15 +1,43 @@
 name: Keep Supabase Alive
+
 on:
   schedule:
-    - cron: '0 12 */3 * *'
+    # Cada 2 días a las 12:00 UTC (7 am Colombia). Muy por debajo de los 7 días de pausa.
+    - cron: '0 12 */2 * *'
   workflow_dispatch:
+
+permissions:
+  actions: write   # necesario para re-habilitar este workflow (ver último paso)
+  contents: read
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Consulta trivial a Supabase
+      - name: Consulta a Supabase (falla si la respuesta no es 2xx)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          curl -s "https://finkwolszhtvatkyfiww.supabase.co/rest/v1/members?select=id&limit=1" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Faltan los secrets SUPABASE_URL y/o SUPABASE_ANON_KEY"
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 10 --max-time 30 \
+            -X POST "$SUPABASE_URL/rest/v1/rpc/ping" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+          echo
+          echo "Supabase respondió OK"
+
+      # GitHub desactiva los workflows programados tras 60 días sin actividad en el repo.
+      # Re-habilitarlo en cada ejecución reinicia ese contador.
+      - name: Mantener activo este workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT \
+            "repos/${{ github.repository }}/actions/workflows/keep-supabase-alive.yml/enable"
