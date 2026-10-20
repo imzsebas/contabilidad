@@ -18,9 +18,6 @@ export default function LoginPage() {
 
     const { data, error } = await supabase.auth.signInWithPassword({ email: correo, password });
     if (error) {
-      // Los errores de Supabase vienen en inglés: se traducen los más comunes.
-      // - Correo o contraseña mal escritos (o correo que no existe): mismo mensaje en ambos casos.
-      // - Un monitor al que se le quitó el rol tiene la cuenta bloqueada.
       const credencialesInvalidas = /invalid login credentials/i.test(error.message);
       const bloqueada = /banned/i.test(error.message);
       setMessage({
@@ -35,8 +32,6 @@ export default function LoginPage() {
       return;
     }
 
-    // Cada rol entra a su pantalla de inicio. Si no se puede leer el rol, se va a /recepcion
-    // (lo que hacía antes), y cada página vuelve a validar el permiso por su cuenta.
     let destino = '/recepcion';
     const userId = data.user?.id;
     if (userId) {
