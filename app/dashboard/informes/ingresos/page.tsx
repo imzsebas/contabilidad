@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo, traerPorIds } from '@/lib/db'
+import { cargarExcelJS } from '@/lib/excel'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -76,12 +78,12 @@ export default function InformeIngresos() {
         hasta = fechaHasta
       }
 
-      const { data: records } = await supabase
+      const records: any[] = await traerTodo(() => supabase
         .from('income_records')
         .select('id, fecha, total')
         .gte('fecha', desde)
         .lte('fecha', hasta)
-        .order('fecha', { ascending: true })
+        .order('fecha', { ascending: true }))
 
       if (!records || records.length === 0) {
         setRegistros([])
@@ -92,28 +94,16 @@ export default function InformeIngresos() {
 
       const ids = records.map(r => r.id)
 
-      // Columnas
-      const { data: cols } = await supabase
-        .from('income_columns')
-        .select('record_id, nombre, codigo_puc, id')
-        .in('record_id', ids)
+      // Columnas, filas y distribución de esos registros
+      const [cols, rows, dist]: any[][] = await Promise.all([
+        traerPorIds('income_columns', 'id, record_id, nombre, codigo_puc', 'record_id', ids),
+        traerPorIds('income_rows', 'id, record_id', 'record_id', ids),
+        traerPorIds('income_distribution', 'id, record_id, concepto, porcentaje, monto_aproximado', 'record_id', ids),
+      ])
 
-      // Valores
-      const { data: vals } = await supabase
-        .from('income_values')
-        .select('row_id, column_id, monto')
-
-      // Filas
-      const { data: rows } = await supabase
-        .from('income_rows')
-        .select('id, record_id')
-        .in('record_id', ids)
-
-      // Distribución
-      const { data: dist } = await supabase
-        .from('income_distribution')
-        .select('record_id, concepto, porcentaje, monto_aproximado')
-        .in('record_id', ids)
+      // Valores: SOLO los de esas filas (antes se pedía la tabla completa
+      // y, al pasar de 1.000 filas, los ingresos recientes salían en cero)
+      const vals: any[] = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', rows.map((r: any) => r.id))
 
       // Construir registros enriquecidos
       const enriched: Registro[] = records.map(rec => {
@@ -229,16 +219,7 @@ export default function InformeIngresos() {
 
   // ── Excel ─────────────────────────────────────────────────────────────
   async function exportarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => resolve()
-        s.onerror = reject
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Ábaco'
 
@@ -573,16 +554,7 @@ export default function InformeIngresos() {
 
   // ── Excel por registro ────────────────────────────────────────────────
   async function generarExcelRegistro(r: Registro) {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => resolve()
-        s.onerror = reject
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     const thinB = { style: 'thin' as const, color: { argb: 'FF000000' } }
     const allB  = { top: thinB, left: thinB, bottom: thinB, right: thinB }

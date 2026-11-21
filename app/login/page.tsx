@@ -1,7 +1,7 @@
 "use client"
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { iniciarSesion } from '@/lib/auth'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,21 +17,12 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const { data, error: dbError } = await supabase
-        .from('users')
-        .select('id, name, cedula')
-        .eq('cedula', cedula.trim())
-        .eq('password', password)
-        .single()
-
-      if (dbError || !data) {
+      const usuario = await iniciarSesion(cedula, password)
+      if (!usuario) {
         setError('Cédula o contraseña incorrectos.')
         setLoading(false)
         return
       }
-
-      // Guarda el usuario en sessionStorage para usarlo en el dashboard
-      sessionStorage.setItem('user', JSON.stringify(data))
       router.push('/dashboard')
 
     } catch {
@@ -149,7 +140,7 @@ export default function LoginPage() {
           <h2 className="left-title">Gestiona las finanzas con confianza.</h2>
           <p className="left-subtitle">Accede a tu panel contable y mantén el control de los ingresos, egresos y reportes en un solo lugar.</p>
         </div>
-        <div className="left-footer">© 2026 sebastian nunez protuctions</div>
+        <div className="left-footer">© 2026 Sebastian Nuñez Productions</div>
       </div>
 
       <div className="login-right">
@@ -167,7 +158,7 @@ export default function LoginPage() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="Ej: 1062955748"
+                  placeholder="Número de cédula"
                   value={cedula}
                   onChange={e => setCedula(e.target.value)}
                   required
@@ -200,7 +191,7 @@ export default function LoginPage() {
             </div>
 
             <div className="forgot">
-              <a href="#">¿Olvidaste tu contraseña?</a>
+              <span style={{ fontSize: 12, color: '#8A9CC0' }}>¿Olvidaste tu contraseña? Pídele al administrador que la restablezca.</span>
             </div>
 
             {error && (

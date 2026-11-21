@@ -173,6 +173,7 @@ export default function FormularioEgreso() {
   const [fechaAlerta,  setFechaAlerta]  = useState(false)
   const [step,         setStep]         = useState(1)
   const [showFinalModal, setShowFinalModal] = useState(false)
+  const [aceptoDescuadre, setAceptoDescuadre] = useState(false)
 
   const necesitaDocumento = !config.docNumero
   const necesitaPagadoA   = tipo === 'otro'
@@ -181,7 +182,7 @@ export default function FormularioEgreso() {
 
   // número de comprobante automático + cargar usuario
   useEffect(() => {
-    supabase.from('expense_records').select('numero').order('numero', { ascending: false }).limit(1)
+    supabase.from('expense_records').select('numero').order('numero', { ascending: false, nullsFirst: false }).limit(1)
       .then(({ data }) => {
         const last = data?.[0]?.numero || 0
         setNumero(String(last + 1))
@@ -208,6 +209,7 @@ export default function FormularioEgreso() {
   }
 
   function setCuenta(i: number, field: keyof Cuenta, val: string) {
+    setAceptoDescuadre(false)
     setCuentas(prev => prev.map((c, idx) =>
       idx === i ? { ...c, [field]: field === 'debito' || field === 'credito'
         ? (parseInt(val.replace(/\D/g,'')) || 0) : val } : c
@@ -227,12 +229,29 @@ export default function FormularioEgreso() {
     if (!fecha) { setError('La fecha es obligatoria'); return false }
     if (!pagadoA.trim()) { setError('El campo "Pagado a" es obligatorio'); return false }
     if (valorNum === 0) { setError('El valor debe ser mayor a cero'); return false }
+    if (saved) return true   // evita guardar dos veces el mismo comprobante
     setSaving(true); setError('')
     try {
+      // Verificar que el número no lo haya tomado otra persona mientras se llenaba
+      // el formulario (ya pasó: el No. 2632 quedó repetido).
+      let numeroFinal = parseInt(numero) || null
+      if (numeroFinal !== null) {
+        const { data: existe, error: eNum } = await supabase
+          .from('expense_records').select('id').eq('numero', numeroFinal).limit(1)
+        if (eNum) throw eNum
+        if (existe && existe.length > 0) {
+          const { data: ult, error: eUlt } = await supabase
+            .from('expense_records').select('numero').order('numero', { ascending: false, nullsFirst: false }).limit(1)
+          if (eUlt) throw eUlt
+          numeroFinal = (ult?.[0]?.numero || 0) + 1
+          setNumero(String(numeroFinal))
+        }
+      }
+
       const { data: rec, error: e1 } = await supabase
         .from('expense_records')
         .insert({
-          numero: parseInt(numero) || null,
+          numero: numeroFinal,
           fecha, ciudad, pagado_a: pagadoA,
           concepto: conceptoFinal, valor: valorNum,
           en_letras: enLetras, efectivo,
@@ -283,6 +302,19 @@ export default function FormularioEgreso() {
     if (s === 2) {
       if (necesitaPagadoA && !pagadoA.trim()) { setError('El campo "Pagado a" es obligatorio'); return false }
       if (valorNum === 0) { setError('El valor debe ser mayor a cero'); return false }
+    }
+    if (s === 3) {
+      // Partida doble: la suma de débitos debe ser igual a la de créditos.
+      // Se avisa una vez; si el usuario vuelve a dar "Siguiente", se permite continuar.
+      const cs = cuentas.filter(c => (c.codigo || '').toUpperCase() !== 'TOTAL')
+      const deb = cs.reduce((a, c) => a + (c.debito || 0), 0)
+      const cre = cs.reduce((a, c) => a + (c.credito || 0), 0)
+      if (deb !== cre && !aceptoDescuadre) {
+        setAceptoDescuadre(true)
+        setError(`Las cuentas no cuadran: débitos $${fmt(deb)} ≠ créditos $${fmt(cre)} (diferencia $${fmt(Math.abs(deb - cre))}). ` +
+          'Revisa que las retenciones (ej. RTE FTE 2365) estén en CRÉDITO. Si está bien así, da "Siguiente" otra vez.')
+        return false
+      }
     }
     return true
   }

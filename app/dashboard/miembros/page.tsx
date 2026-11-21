@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo } from '@/lib/db'
 
 interface Member {
   id: number
@@ -33,11 +34,15 @@ export default function MiembrosPage() {
 
   const fetchMembers = useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('members')
-      .select('*')
-      .order('nombre', { ascending: true })
-    if (!error && data) setMembers(data)
+    try {
+      const data = await traerTodo(() => supabase
+        .from('members')
+        .select('*')
+        .order('nombre', { ascending: true }))
+      setMembers(data)
+    } catch (e: any) {
+      setError('Error cargando miembros: ' + (e.message || e))
+    }
     setLoading(false)
   }, [])
 

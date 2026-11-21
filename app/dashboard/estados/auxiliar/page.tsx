@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo, valoresEgresos, saldoAntesDe, saldoInicialDelAnio, tablaSaldosDisponible } from '@/lib/db'
+import { verificarClave } from '@/lib/clave'
+import { cargarExcelJS } from '@/lib/excel'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaAuxiliar {
@@ -42,14 +45,47 @@ export default function LibroAuxiliarPage() {
   const [modalPass,          setModalPass]          = useState('')
   const [modalMonto,         setModalMonto]         = useState('')
   const [modalError,         setModalError]         = useState('')
-  const PASS_SALDO = 'Ctbd123'
+  // true = el saldo inicial se guarda en la base de datos (tabla saldos_iniciales)
+  // false = la tabla aún no existe: el saldo solo dura mientras la página esté abierta
+  const [saldoPersistido,    setSaldoPersistido]    = useState(false)
+  const [guardandoSaldo,     setGuardandoSaldo]     = useState(false)
+
+  // Cargar el saldo inicial guardado del año seleccionado
+  useEffect(() => {
+    if (!añoSel) return
+    saldoInicialDelAnio(parseInt(añoSel)).then(v => {
+      const persiste = tablaSaldosDisponible() === true
+      setSaldoPersistido(persiste)
+      // Si no se guarda en la base de datos, cada año empieza sin saldo personalizado
+      setSaldoInicialCustom(persiste ? v : null)
+    })
+  }, [añoSel])
+
+  async function guardarSaldoInicial(monto: number | null) {
+    setModalError('')
+    setGuardandoSaldo(true)
+    try {
+      if (!(await verificarClave('saldo', modalPass))) { setModalError('Contraseña incorrecta'); return }
+      if (saldoPersistido) {
+        // upsert: crea o actualiza la fila del año. "Quitar" deja el monto en null (no borra nada).
+        const { error: e } = await supabase.from('saldos_iniciales')
+          .upsert({ anio: parseInt(añoSel), monto, actualizado: new Date().toISOString() })
+        if (e) { setModalError('No se pudo guardar: ' + e.message); return }
+      }
+      setSaldoInicialCustom(monto)
+      setShowModalSaldo(false)
+    } finally {
+      setGuardandoSaldo(false)
+    }
+  }
 
   // ── Cargar años disponibles (unión de ingresos y egresos) ─────────────────
   useEffect(() => {
     Promise.all([
-      supabase.from('expense_records').select('fecha').order('fecha'),
-      supabase.from('income_records').select('fecha').order('fecha'),
-    ]).then(([e, i]) => {
+      traerTodo(() => supabase.from('expense_records').select('id, fecha').order('fecha')),
+      traerTodo(() => supabase.from('income_records').select('id, fecha').order('fecha')),
+    ]).then(([eData, iData]) => {
+      const e = { data: eData }, i = { data: iData }
       const set = new Set<string>()
       ;(e.data || []).forEach((r: any) => set.add(r.fecha.slice(0, 4)))
       ;(i.data || []).forEach((r: any) => set.add(r.fecha.slice(0, 4)))
@@ -79,37 +115,20 @@ export default function LibroAuxiliarPage() {
       const desde     = `${añoSel}-${mesSel}-01`
       const hasta     = `${añoSel}-${mesSel}-${String(ultimoDia).padStart(2, '0')}`
 
-      // 1. Egresos del mes — solo el débito principal (orden 0) por registro
-      const { data: expRecords, error: e1 } = await supabase
+      // 1. Egresos del mes — valor = débito principal (orden 0) o, si no hay, el valor
+      const expRecords: any[] = await traerTodo(() => supabase
         .from('expense_records')
-        .select('id, fecha, concepto, valor')
+        .select('id, fecha, concepto, valor, numero')
         .gte('fecha', desde).lte('fecha', hasta)
-        .order('fecha').order('numero')
-      if (e1) throw e1
-
-      // Obtener el valor real del débito principal desde expense_accounts
-      const expIds = (expRecords || []).map((r: any) => r.id)
-      let debitosPorRecord: Record<number, number> = {}
-      if (expIds.length > 0) {
-        const { data: accs, error: e2 } = await supabase
-          .from('expense_accounts')
-          .select('record_id, debito, orden')
-          .in('record_id', expIds)
-          .eq('orden', 0)
-          .gt('debito', 0)
-        if (e2) throw e2
-        ;(accs || []).forEach((a: any) => {
-          debitosPorRecord[a.record_id] = a.debito
-        })
-      }
+        .order('fecha').order('numero'))
+      const debitosPorRecord = await valoresEgresos(expRecords)
 
       // 2. Ingresos del mes
-      const { data: incRecords, error: e3 } = await supabase
+      const incRecords: any[] = await traerTodo(() => supabase
         .from('income_records')
         .select('id, fecha, total')
         .gte('fecha', desde).lte('fecha', hasta)
-        .order('fecha')
-      if (e3) throw e3
+        .order('fecha'))
 
       // 3. Combinar y ordenar por fecha
       type Movimiento = { fecha: string; esIngreso: boolean; valor: number; descripcion: string }
@@ -150,28 +169,12 @@ export default function LibroAuxiliarPage() {
       const mesNum2    = parseInt(mesSel)
       const hastaAntes = `${añoSel}-${mesSel}-01`
 
-      const [{ data: expAntes }, { data: incAntes }] = await Promise.all([
-        supabase.from('expense_records').select('id, valor').lt('fecha', hastaAntes),
-        supabase.from('income_records').select('total').lt('fecha', hastaAntes),
-      ])
+      let saldoAnterior = await saldoAntesDe(hastaAntes)
 
-      const expIdsAntes = (expAntes || []).map((r: any) => r.id)
-      let debMapAntes: Record<number, number> = {}
-      if (expIdsAntes.length > 0) {
-        const { data: accsAntes } = await supabase
-          .from('expense_accounts').select('record_id, debito, orden')
-          .in('record_id', expIdsAntes).eq('orden', 0).gt('debito', 0)
-        ;(accsAntes || []).forEach((a: any) => { debMapAntes[a.record_id] = a.debito })
-      }
-
-      let saldoAnterior = 0
-      ;(incAntes || []).forEach((r: any) => { saldoAnterior += (r.total ?? 0) })
-      ;(expAntes || []).forEach((r: any) => {
-        saldoAnterior -= (debMapAntes[r.id] ?? r.valor ?? 0)
-      })
-
-      // Si es enero y hay un saldo inicial personalizado, sumarlo
-      if (mesNum === 1 && saldoInicialCustom !== null) {
+      // Saldo inicial personalizado del año: se suma desde enero y se arrastra
+      // a todos los meses siguientes (antes solo se sumaba en enero).
+      // (si está guardado en la base de datos, saldoAntesDe ya lo incluye)
+      if (!saldoPersistido && saldoInicialCustom !== null) {
         saldoAnterior += saldoInicialCustom
       }
 
@@ -208,21 +211,13 @@ export default function LibroAuxiliarPage() {
     } finally {
       setLoading(false)
     }
-  }, [añoSel, mesSel, saldoInicialCustom])
+  }, [añoSel, mesSel, saldoInicialCustom, saldoPersistido])
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
 
   // ── Exportar Excel (año completo, una hoja por mes) ───────────────────────
   async function exportarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((res, rej) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => res(); s.onerror = rej
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Ábaco'
 
@@ -237,17 +232,11 @@ export default function LibroAuxiliarPage() {
       const desde     = `${añoSel}-${mes}-01`
       const hasta     = `${añoSel}-${mes}-${String(ultimoDia).padStart(2, '0')}`
 
-      const [{ data: expR }, { data: incR }] = await Promise.all([
-        supabase.from('expense_records').select('id, fecha, concepto, valor').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero'),
-        supabase.from('income_records').select('fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha'),
+      const [expR, incR]: any[][] = await Promise.all([
+        traerTodo(() => supabase.from('expense_records').select('id, fecha, concepto, valor, numero').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero')),
+        traerTodo(() => supabase.from('income_records').select('id, fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha')),
       ])
-
-      const expIds2 = (expR || []).map((r: any) => r.id)
-      let debMap: Record<number, number> = {}
-      if (expIds2.length > 0) {
-        const { data: accs } = await supabase.from('expense_accounts').select('record_id, debito, orden').in('record_id', expIds2).eq('orden', 0).gt('debito', 0)
-        ;(accs || []).forEach((a: any) => { debMap[a.record_id] = a.debito })
-      }
+      const debMap = await valoresEgresos(expR)
 
       type Mov = { fecha: string; esIngreso: boolean; valor: number; descripcion: string }
       const movs: Mov[] = []
@@ -300,21 +289,10 @@ export default function LibroAuxiliarPage() {
       // Datos
       // Saldo anterior para este mes
       const hastaAntesXls = `${añoSel}-${mes}-01`
-      const [{ data: expAntesXls }, { data: incAntesXls }] = await Promise.all([
-        supabase.from('expense_records').select('id, valor').lt('fecha', hastaAntesXls),
-        supabase.from('income_records').select('total').lt('fecha', hastaAntesXls),
-      ])
-      const expIdsAntesXls = (expAntesXls || []).map((r: any) => r.id)
-      let debMapAntesXls: Record<number, number> = {}
-      if (expIdsAntesXls.length > 0) {
-        const { data: accsAntesXls } = await supabase
-          .from('expense_accounts').select('record_id, debito, orden')
-          .in('record_id', expIdsAntesXls).eq('orden', 0).gt('debito', 0)
-        ;(accsAntesXls || []).forEach((a: any) => { debMapAntesXls[a.record_id] = a.debito })
-      }
-      let saldoAntXls = 0
-      ;(incAntesXls || []).forEach((r: any) => { saldoAntXls += (r.total ?? 0) })
-      ;(expAntesXls || []).forEach((r: any) => { saldoAntXls -= (debMapAntesXls[r.id] ?? r.valor ?? 0) })
+      // Mismo cálculo que en pantalla (incluye el saldo inicial personalizado,
+      // que antes no aparecía en el Excel)
+      let saldoAntXls = await saldoAntesDe(hastaAntesXls)
+      if (!saldoPersistido && saldoInicialCustom !== null) saldoAntXls += saldoInicialCustom
 
       let saldo = saldoAntXls
       let rn = 6
@@ -570,7 +548,7 @@ export default function LibroAuxiliarPage() {
                    onClick={e => { if (e.target === e.currentTarget) setShowModalSaldo(false) }}>
                 <div style={{background:'#fff',borderRadius:16,padding:'32px 28px',width:340,boxShadow:'0 8px 40px rgba(26,58,143,.18)'}}>
                   <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:'#0F2560',fontWeight:700,marginBottom:4}}>Ajustar saldo inicial</div>
-                  <div style={{fontSize:12,color:'#8A9CC0',marginBottom:20}}>Ingresa la contraseña y el monto de apertura</div>
+                  <div style={{fontSize:12,color:'#8A9CC0',marginBottom:20}}>Ingresa la contraseña y el monto de apertura del año {añoSel}{saldoPersistido ? '' : ' (no se guarda al recargar la página hasta aplicar el script SQL)'}</div>
 
                   <label style={{fontSize:11,fontWeight:600,color:'#4A6090',letterSpacing:'.05em'}}>CONTRASEÑA</label>
                   <input
@@ -597,24 +575,18 @@ export default function LibroAuxiliarPage() {
                       style={{flex:1,padding:'9px 0',borderRadius:9,border:'1.5px solid #D8E4F8',background:'#EEF4FF',color:'#1A3A8F',fontSize:13,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
                       Cancelar
                     </button>
-                    <button onClick={() => {
-                      if (modalPass !== PASS_SALDO) { setModalError('Contraseña incorrecta'); return }
+                    <button disabled={guardandoSaldo} onClick={() => {
                       const n = parseFloat(modalMonto)
                       if (isNaN(n)) { setModalError('Ingresa un monto válido'); return }
-                      setSaldoInicialCustom(n)
-                      setShowModalSaldo(false)
+                      guardarSaldoInicial(n)
                     }}
                       style={{flex:1,padding:'9px 0',borderRadius:9,border:'none',background:'#1A3A8F',color:'#fff',fontSize:13,cursor:'pointer',fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>
-                      Guardar
+                      {guardandoSaldo ? 'Verificando...' : 'Guardar'}
                     </button>
                   </div>
 
                   {saldoInicialCustom !== null && (
-                    <button onClick={() => {
-                      if (modalPass !== PASS_SALDO) { setModalError('Contraseña incorrecta'); return }
-                      setSaldoInicialCustom(null)
-                      setShowModalSaldo(false)
-                    }}
+                    <button disabled={guardandoSaldo} onClick={() => guardarSaldoInicial(null)}
                       style={{width:'100%',marginTop:10,padding:'8px 0',borderRadius:9,border:'1.5px solid #FBBCBC',background:'#FEE8E8',color:'#C0392B',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
                       Quitar saldo inicial personalizado
                     </button>

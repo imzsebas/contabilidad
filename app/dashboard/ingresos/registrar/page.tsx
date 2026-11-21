@@ -2,6 +2,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo } from '@/lib/db'
+import { cargarExcelJS } from '@/lib/excel'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface Column  { id: string; nombre: string; codigoPUC: string }
@@ -224,12 +226,13 @@ export default function RegistrarIngreso() {
 
   // Cargar miembros activos
   useEffect(() => {
-    supabase
+    traerTodo(() => supabase
       .from('members')
       .select('id, nombre, cedula')
       .eq('activo', true)
-      .order('nombre')
-      .then(({ data }) => { if (data) setMembers(data) })
+      .order('nombre'))
+      .then((data: any) => setMembers(data))
+      .catch((e: any) => setError('Error cargando miembros: ' + (e.message || e)))
   }, [])
 
   const refreshDist = useCallback((nextCols: Column[], nextRows: Row[], prevDist: DistItem[]) => {
@@ -382,7 +385,9 @@ export default function RegistrarIngreso() {
 
   // ── Guardar ────────────────────────────────────────────────────────────
   async function guardar() {
+    if (saved || saving) return   // evita guardar dos veces el mismo día
     setSaving(true); setError('')
+    let recIdCreado: number | null = null
     try {
       // Validaciones
       for (let i = 0; i < rows.length; i++) {
@@ -395,6 +400,7 @@ export default function RegistrarIngreso() {
       const { data: rec, error: e1 } = await supabase
         .from('income_records').insert({ fecha, total: general }).select().single()
       if (e1 || !rec) throw e1 || new Error('No se pudo crear el registro')
+      recIdCreado = rec.id
 
       // 2. Columnas
       const colsInsert = cols.map((c,i) => ({ record_id: rec.id, nombre: c.nombre, codigo_puc: c.codigoPUC, orden: i }))
@@ -429,7 +435,15 @@ export default function RegistrarIngreso() {
 
       setSaved(true)
     } catch (e: any) {
-      setError(e.message || 'Error inesperado al guardar')
+      if (recIdCreado !== null) {
+        // Parte del registro ya quedó en la base de datos. NO se borra nada
+        // automáticamente; se bloquea un segundo guardado para no duplicarlo.
+        setSaved(true)
+        setError(`${e.message || 'Error inesperado al guardar'} — ATENCIÓN: el registro del ${fecha} quedó guardado a medias (ID ${recIdCreado}). ` +
+          'No lo vuelvas a guardar: revísalo y complétalo en Estado de Ingresos.')
+      } else {
+        setError(e.message || 'Error inesperado al guardar')
+      }
     } finally {
       setSaving(false)
     }
@@ -499,15 +513,7 @@ export default function RegistrarIngreso() {
 
   // ── EXCEL ──────────────────────────────────────────────────────────────
   async function generarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => resolve(); s.onerror = reject
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Abaco'; wb.created = new Date()
 
@@ -893,7 +899,7 @@ export default function RegistrarIngreso() {
       </div>
 
       <div className="content">
-        {saved && <div className="alert-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>Registro guardado exitosamente en Supabase.</div>}
+        {saved && !error && <div className="alert-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>Registro guardado exitosamente en Supabase.</div>}
         {error && <div className="alert-error"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>{error}</div>}
 
         {/* Pestañas: Tabla de ingresos protagonista / Distribución aparte */}
@@ -1153,8 +1159,8 @@ export default function RegistrarIngreso() {
             </button>
           </div>
           {tab === 'distribucion' && (
-            <button className="btn btn-primary" onClick={guardar} disabled={saving}>
-              {saving ? 'Guardando...' : 'Guardar registro'}
+            <button className="btn btn-primary" onClick={guardar} disabled={saving || saved}>
+              {saving ? 'Guardando...' : saved ? '✓ Guardado' : 'Guardar registro'}
             </button>
           )}
         </div>

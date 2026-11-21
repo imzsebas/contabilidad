@@ -2,6 +2,8 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo, traerPorIds } from '@/lib/db'
+import { cargarExcelJS } from '@/lib/excel'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -101,28 +103,21 @@ export default function InformeEgresos() {
         hasta = fechaHasta
       }
 
-      let query = supabase
-        .from('expense_records')
-        .select('id, fecha, numero, ciudad, pagado_a, concepto, valor, en_letras, tipo, efectivo, doc_tipo, doc_numero, elaborado_por')
-        .gte('fecha', desde)
-        .lte('fecha', hasta)
-        .order('fecha', { ascending: true })
-
-      if (tipoFiltro !== 'todos') {
-        query = query.eq('tipo', tipoFiltro)
-      }
-
-      const { data } = await query
-      const records: Egreso[] = data || []
+      const records: Egreso[] = await traerTodo(() => {
+        let query = supabase
+          .from('expense_records')
+          .select('id, fecha, numero, ciudad, pagado_a, concepto, valor, en_letras, tipo, efectivo, doc_tipo, doc_numero, elaborado_por')
+          .gte('fecha', desde)
+          .lte('fecha', hasta)
+          .order('fecha', { ascending: true })
+        if (tipoFiltro !== 'todos') query = query.eq('tipo', tipoFiltro)
+        return query
+      })
 
       // Cargar cuentas P.U.C. para todos los registros
       if (records.length > 0) {
         const ids = records.map(r => r.id)
-        const { data: accs } = await supabase
-          .from('expense_accounts')
-          .select('record_id, codigo, cuenta, debito, credito, orden')
-          .in('record_id', ids)
-          .order('orden')
+        const accs = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', ids, q => q.order('orden'))
         const accsMap: Record<number, CuentaPUC[]> = {}
         ;(accs || []).forEach((a: any) => {
           if (!accsMap[a.record_id]) accsMap[a.record_id] = []
@@ -194,16 +189,7 @@ export default function InformeEgresos() {
 
   // ── Excel ─────────────────────────────────────────────────────────────
   async function exportarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => resolve()
-        s.onerror = reject
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Ábaco'
 

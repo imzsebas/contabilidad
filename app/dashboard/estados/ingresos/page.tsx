@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { verificarClave } from '@/lib/clave'
+import { cargarExcelJS } from '@/lib/excel'
+import { traerPorIds, traerTodo } from '@/lib/db'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -147,7 +150,6 @@ export default function EstadoIngresosPage() {
 
   // ── Modificar (protegido por contraseña): reasignar miembro, editar valor,
   //     eliminar registros individuales y agregar uno omitido ────────────────
-  const PASSWORD_ACTUALIZAR = '1062955748'
   const [members,          setMembers]          = useState<Member[]>([])
   const [modoEdicion,      setModoEdicion]       = useState(false)
   const [showPassModal,    setShowPassModal]     = useState(false)
@@ -175,13 +177,14 @@ export default function EstadoIngresosPage() {
   const [agregando,        setAgregando]        = useState(false)
 
   useEffect(() => {
-    supabase.from('members').select('id, nombre, cedula').order('nombre')
-      .then(({ data }: any) => { if (data) setMembers(data) })
+    traerTodo(() => supabase.from('members').select('id, nombre, cedula').order('nombre'))
+      .then((data: any) => setMembers(data))
+      .catch((e: any) => setError('Error cargando miembros: ' + (e.message || e)))
   }, [])
 
   // ── Cargar años disponibles ─────────────────────────────────────────────
   useEffect(() => {
-    supabase.from('income_records').select('fecha').order('fecha').then(({ data }: any) => {
+    traerTodo(() => supabase.from('income_records').select('id, fecha').order('fecha')).then((data: any) => {
       if (!data) return
       const set  = new Set(data.map((r: any) => r.fecha.slice(0, 4)))
       const list = Array.from(set).sort() as string[]
@@ -221,20 +224,17 @@ export default function EstadoIngresosPage() {
       const recIds = records.map((r: any) => r.id)
 
       // 2. Columnas, rows, valores en paralelo
-      const [{ data: cols }, { data: rows }, ] = await Promise.all([
-        supabase.from('income_columns').select('id, record_id, nombre, orden').in('record_id', recIds).order('orden'),
-        supabase.from('income_rows').select('id, record_id, orden, member_id').in('record_id', recIds).order('orden'),
+      const [cols, rows] = await Promise.all([
+        traerPorIds('income_columns', 'id, record_id, nombre, orden', 'record_id', recIds, q => q.order('orden')),
+        traerPorIds('income_rows', 'id, record_id, orden, member_id', 'record_id', recIds, q => q.order('orden')),
       ])
 
       const rowIds = (rows || []).map((r: any) => r.id)
-      const { data: vals } = await supabase
-        .from('income_values').select('row_id, column_id, monto').in('row_id', rowIds)
+      const vals = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', rowIds)
 
       // 3. Miembros
-      const memberIds = [...new Set((rows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))]
-      const { data: members } = memberIds.length
-        ? await supabase.from('members').select('id, nombre, cedula').in('id', memberIds)
-        : { data: [] }
+      const memberIds = [...new Set((rows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))] as number[]
+      const members = await traerPorIds('members', 'id, nombre, cedula', 'id', memberIds)
 
       // Maps auxiliares
       const memberMap: Record<number, { nombre: string; cedula: string }> = {}
@@ -319,8 +319,9 @@ export default function EstadoIngresosPage() {
     setPassInput(''); setPassError(''); setShowPassModal(true)
   }
 
-  function confirmarPassword() {
-    if (passInput !== PASSWORD_ACTUALIZAR) { setPassError('Contraseña incorrecta.'); return }
+  async function confirmarPassword() {
+    setPassError('Verificando...')
+    if (!(await verificarClave('edicion', passInput))) { setPassError('Contraseña incorrecta.'); return }
     setModoEdicion(true)
     setShowPassModal(false)
     setPassInput(''); setPassError('')
@@ -527,15 +528,7 @@ export default function EstadoIngresosPage() {
 
   // ── Exportar Excel (año completo, una hoja por mes) ─────────────────────────
   async function exportarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((res, rej) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => res(); s.onerror = rej
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Ábaco'
 
@@ -575,19 +568,16 @@ export default function EstadoIngresosPage() {
     if (!allRecords?.length) return
 
     const allRecIds = allRecords.map((r: any) => r.id)
-    const [{ data: allCols }, { data: allRows }] = await Promise.all([
-      supabase.from('income_columns').select('id, record_id, nombre, orden').in('record_id', allRecIds).order('orden'),
-      supabase.from('income_rows').select('id, record_id, orden, member_id').in('record_id', allRecIds).order('orden'),
+    const [allCols, allRows] = await Promise.all([
+      traerPorIds('income_columns', 'id, record_id, nombre, orden', 'record_id', allRecIds, q => q.order('orden')),
+      traerPorIds('income_rows', 'id, record_id, orden, member_id', 'record_id', allRecIds, q => q.order('orden')),
     ])
 
     const allRowIds = (allRows || []).map((r: any) => r.id)
-    const { data: allVals } = await supabase
-      .from('income_values').select('row_id, column_id, monto').in('row_id', allRowIds)
+    const allVals = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', allRowIds)
 
-    const allMemberIds = [...new Set((allRows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))]
-    const { data: allMembers } = allMemberIds.length
-      ? await supabase.from('members').select('id, nombre, cedula').in('id', allMemberIds)
-      : { data: [] }
+    const allMemberIds = [...new Set((allRows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))] as number[]
+    const allMembers = await traerPorIds('members', 'id, nombre, cedula', 'id', allMemberIds)
 
     const mMap: Record<number, { nombre: string; cedula: string }> = {}
     ;(allMembers || []).forEach((m: any) => { mMap[m.id] = { nombre: m.nombre, cedula: m.cedula } })

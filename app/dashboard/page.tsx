@@ -2,6 +2,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { cerrarSesion } from '@/lib/auth'
+import { traerTodo, traerPorIds, valoresEgresos, saldoAntesDe } from '@/lib/db'
+import { cargarExcelJS, cargarJSZip } from '@/lib/excel'
 
 // ── Íconos reutilizados en el menú lateral ────────────────────────────────
 const IconDashboard = (
@@ -126,13 +129,8 @@ export default function DashboardPage() {
 
   async function sumarEgresosConDebito(records: { id: number; valor: number }[]) {
     if (!records?.length) return 0
-    const ids = records.map(r => r.id)
-    const { data: accs } = await supabase
-      .from('expense_accounts').select('record_id, debito, orden')
-      .in('record_id', ids).eq('orden', 0).gt('debito', 0)
-    const debMap: Record<number, number> = {}
-    ;(accs || []).forEach((a: any) => { debMap[a.record_id] = a.debito })
-    return records.reduce((acc, r) => acc + (debMap[r.id] ?? r.valor ?? 0), 0)
+    const valores = await valoresEgresos(records)
+    return records.reduce((acc, r) => acc + (valores[r.id] ?? 0), 0)
   }
 
   async function cargarResumen() {
@@ -144,17 +142,11 @@ export default function DashboardPage() {
       const desdeMes = `${y}-${m}-01`
       const hastaMes = `${y}-${m}-${String(ultimoDia).padStart(2, '0')}`
 
-      const [
-        { data: incHoy },
-        { data: expHoy },
-        { data: incMes },
-        { data: expMes },
-        { count: totalMiembros },
-      ] = await Promise.all([
-        supabase.from('income_records').select('total').eq('fecha', hoy),
-        supabase.from('expense_records').select('id, valor').eq('fecha', hoy),
-        supabase.from('income_records').select('total').gte('fecha', desdeMes).lte('fecha', hastaMes),
-        supabase.from('expense_records').select('id, valor').gte('fecha', desdeMes).lte('fecha', hastaMes),
+      const [incHoy, expHoy, incMes, expMes, { count: totalMiembros }] = await Promise.all([
+        traerTodo(() => supabase.from('income_records').select('id, total').eq('fecha', hoy)),
+        traerTodo(() => supabase.from('expense_records').select('id, valor').eq('fecha', hoy)),
+        traerTodo(() => supabase.from('income_records').select('id, total').gte('fecha', desdeMes).lte('fecha', hastaMes)),
+        traerTodo(() => supabase.from('expense_records').select('id, valor').gte('fecha', desdeMes).lte('fecha', hastaMes)),
         supabase.from('members').select('id', { count: 'exact', head: true }),
       ])
 
@@ -180,8 +172,8 @@ export default function DashboardPage() {
     setOpenMenu(openMenu === i ? null : i)
   }
 
-  function handleLogout() {
-    sessionStorage.removeItem('user')
+  async function handleLogout() {
+    await cerrarSesion()
     router.push('/login')
   }
 
@@ -198,16 +190,6 @@ export default function DashboardPage() {
     '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE',
   }
   function fmt(n: number) { return n.toLocaleString('es-CO') }
-
-  // ── Cargar librería dinámica ───────────────────────────────────────────────
-  async function loadScript(src: string, globalKey: string) {
-    if ((window as any)[globalKey]) return
-    await new Promise<void>((res, rej) => {
-      const s = document.createElement('script')
-      s.src = src; s.onload = () => res(); s.onerror = rej
-      document.head.appendChild(s)
-    })
-  }
 
   // ── Generar Excel de Ingresos (año completo) ───────────────────────────────
   async function generarExcelIngresos(año: string, ExcelJS: any): Promise<ArrayBuffer> {
@@ -231,23 +213,21 @@ export default function DashboardPage() {
       const desde     = `${año}-${mes}-01`
       const hasta     = `${año}-${mes}-${String(ultimoDia).padStart(2,'0')}`
 
-      const { data: records } = await supabase
+      const records: any[] = await traerTodo(() => supabase
         .from('income_records').select('id, fecha, total')
-        .gte('fecha', desde).lte('fecha', hasta).order('fecha')
+        .gte('fecha', desde).lte('fecha', hasta).order('fecha'))
 
       if (!records?.length) continue
 
       const recIds = records.map((r: any) => r.id)
-      const [{ data: cols }, { data: rows }] = await Promise.all([
-        supabase.from('income_columns').select('id, record_id, nombre, orden').in('record_id', recIds).order('orden'),
-        supabase.from('income_rows').select('id, record_id, orden, member_id').in('record_id', recIds).order('orden'),
+      const [cols, rows] = await Promise.all([
+        traerPorIds('income_columns', 'id, record_id, nombre, orden', 'record_id', recIds, q => q.order('orden')),
+        traerPorIds('income_rows', 'id, record_id, orden, member_id', 'record_id', recIds, q => q.order('orden')),
       ])
       const rowIds = (rows || []).map((r: any) => r.id)
-      const { data: vals } = await supabase.from('income_values').select('row_id, column_id, monto').in('row_id', rowIds)
-      const memberIds = [...new Set((rows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))]
-      const { data: members } = memberIds.length
-        ? await supabase.from('members').select('id, nombre, cedula').in('id', memberIds as any)
-        : { data: [] }
+      const vals = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', rowIds)
+      const memberIds = [...new Set((rows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))] as number[]
+      const members = await traerPorIds('members', 'id, nombre, cedula', 'id', memberIds)
 
       const memberMap: Record<number,{nombre:string;cedula:string}> = {}
       ;(members||[]).forEach((m:any)=>{ memberMap[m.id]={nombre:m.nombre,cedula:m.cedula} })
@@ -359,16 +339,14 @@ export default function DashboardPage() {
       const desde     = `${año}-${mes}-01`
       const hasta     = `${año}-${mes}-${String(ultimoDia).padStart(2,'0')}`
 
-      const { data: records } = await supabase
+      const records: any[] = await traerTodo(() => supabase
         .from('expense_records').select('id, numero, fecha, pagado_a, concepto, valor, doc_tipo, doc_numero')
-        .gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero')
+        .gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero'))
 
       if (!records?.length) continue
 
       const recIds = records.map((r:any)=>r.id)
-      const { data: accounts } = await supabase
-        .from('expense_accounts').select('id, record_id, codigo, debito, credito, orden')
-        .in('record_id', recIds).order('orden')
+      const accounts = await traerPorIds('expense_accounts', 'id, record_id, codigo, debito, credito, orden', 'record_id', recIds, q => q.order('orden'))
 
       const accsByRecord: Record<number,any[]> = {}
       ;(accounts||[]).forEach((a:any)=>{ if(!accsByRecord[a.record_id]) accsByRecord[a.record_id]=[]; accsByRecord[a.record_id].push(a) })
@@ -468,17 +446,12 @@ export default function DashboardPage() {
       const desde     = `${año}-${mes}-01`
       const hasta     = `${año}-${mes}-${String(ultimoDia).padStart(2,'0')}`
 
-      const [{ data: expR }, { data: incR }] = await Promise.all([
-        supabase.from('expense_records').select('id, fecha, concepto, valor').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero'),
-        supabase.from('income_records').select('fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha'),
+      const [expR, incR]: any[][] = await Promise.all([
+        traerTodo(() => supabase.from('expense_records').select('id, fecha, concepto, valor, numero').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero')),
+        traerTodo(() => supabase.from('income_records').select('id, fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha')),
       ])
 
-      const expIds = (expR||[]).map((r:any)=>r.id)
-      let debMap: Record<number,number> = {}
-      if(expIds.length>0){
-        const {data:accs}=await supabase.from('expense_accounts').select('record_id, debito, orden').in('record_id',expIds).eq('orden',0).gt('debito',0)
-        ;(accs||[]).forEach((a:any)=>{ debMap[a.record_id]=a.debito })
-      }
+      const debMap = await valoresEgresos(expR)
 
       type Mov={fecha:string;esIngreso:boolean;valor:number;descripcion:string}
       const movs: Mov[] = []
@@ -486,20 +459,8 @@ export default function DashboardPage() {
       ;(incR||[]).forEach((r:any)=>{ if((r.total??0)>0) movs.push({fecha:r.fecha,esIngreso:true,valor:r.total,descripcion:'INGRESO DIEZMOS Y OFRENDAS POR SOBRES'}) })
       movs.sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:a.esIngreso?-1:1)
 
-      // Saldo anterior
-      const [{ data: expAntes }, { data: incAntes }] = await Promise.all([
-        supabase.from('expense_records').select('id, valor').lt('fecha', desde),
-        supabase.from('income_records').select('total').lt('fecha', desde),
-      ])
-      const expIdsAntes=(expAntes||[]).map((r:any)=>r.id)
-      let debMapAntes: Record<number,number>={}
-      if(expIdsAntes.length>0){
-        const {data:accsAntes}=await supabase.from('expense_accounts').select('record_id, debito, orden').in('record_id',expIdsAntes).eq('orden',0).gt('debito',0)
-        ;(accsAntes||[]).forEach((a:any)=>{ debMapAntes[a.record_id]=a.debito })
-      }
-      let saldoAnt=0
-      ;(incAntes||[]).forEach((r:any)=>{ saldoAnt+=(r.total??0) })
-      ;(expAntes||[]).forEach((r:any)=>{ saldoAnt-=(debMapAntes[r.id]??r.valor??0) })
+      // Saldo anterior (todos los movimientos antes de este mes)
+      const saldoAnt = await saldoAntesDe(desde)
 
       const ws=wb.addWorksheet(MESES_TAB[mesNum-1])
       ws.columns=[{width:14},{width:52},{width:16},{width:16},{width:18}]
@@ -560,9 +521,9 @@ export default function DashboardPage() {
       const año = String(new Date().getFullYear())
 
       // Detectar último mes con registros (unión ingresos + egresos)
-      const [{ data: expFechas }, { data: incFechas }] = await Promise.all([
-        supabase.from('expense_records').select('fecha').gte('fecha', `${año}-01-01`).lte('fecha', `${año}-12-31`).order('fecha'),
-        supabase.from('income_records').select('fecha').gte('fecha', `${año}-01-01`).lte('fecha', `${año}-12-31`).order('fecha'),
+      const [expFechas, incFechas]: any[][] = await Promise.all([
+        traerTodo(() => supabase.from('expense_records').select('id, fecha').gte('fecha', `${año}-01-01`).lte('fecha', `${año}-12-31`).order('fecha')),
+        traerTodo(() => supabase.from('income_records').select('id, fecha').gte('fecha', `${año}-01-01`).lte('fecha', `${año}-12-31`).order('fecha')),
       ])
       const todasFechas = [
         ...(expFechas||[]).map((r:any)=>r.fecha),
@@ -576,11 +537,7 @@ export default function DashboardPage() {
 
       // Cargar librerías
       setEtapa('Cargando herramientas...')
-      await loadScript('https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js', 'ExcelJS')
-      await loadScript('https://cdn.jsdelivr.net/npm/jszip/dist/jszip.min.js', 'JSZip')
-
-      const ExcelJS = (window as any).ExcelJS
-      const JSZip   = (window as any).JSZip
+      const [ExcelJS, JSZip] = await Promise.all([cargarExcelJS(), cargarJSZip()])
 
       // Generar los 3 Excel
       setEtapa('Creando libro de ingresos...')

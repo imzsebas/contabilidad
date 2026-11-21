@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { traerTodo, traerPorIds } from '@/lib/db'
+import { verificarClave } from '@/lib/clave'
+import { cargarExcelJS } from '@/lib/excel'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -160,7 +163,6 @@ export default function EstadoEgresosPage() {
   const [error,   setError]   = useState('')
 
   // ── Actualizar descripción/valor (protegido por contraseña) ──────────────
-  const PASSWORD_ACTUALIZAR = '1062955748'
   const [modoEdicion,   setModoEdicion]   = useState(false)
   const [showPassModal, setShowPassModal] = useState(false)
   const [passInput,     setPassInput]     = useState('')
@@ -170,7 +172,7 @@ export default function EstadoEgresosPage() {
 
   // ── Cargar años disponibles ───────────────────────────────────────────────
   useEffect(() => {
-    supabase.from('expense_records').select('fecha').order('fecha').then(({ data }: any) => {
+    traerTodo(() => supabase.from('expense_records').select('id, fecha').order('fecha')).then((data: any) => {
       if (!data) return
       const set  = new Set(data.map((r: any) => r.fecha.slice(0, 4)))
       const list = Array.from(set).sort() as string[]
@@ -198,23 +200,17 @@ export default function EstadoEgresosPage() {
       const hasta     = `${añoSel}-${mesSel}-${String(ultimoDia).padStart(2,'0')}`
 
       // 1. Registros del mes
-      const { data: records, error: e1 } = await supabase
+      const records: any[] = await traerTodo(() => supabase
         .from('expense_records')
         .select('id, numero, fecha, pagado_a, concepto, valor, doc_tipo, doc_numero')
         .gte('fecha', desde).lte('fecha', hasta)
-        .order('fecha').order('numero')
-      if (e1) throw e1
+        .order('fecha').order('numero'))
       if (!records?.length) { setGrupos([]); return }
 
       const recIds = records.map((r: any) => r.id)
 
       // 2. Cuentas PUC de esos registros
-      const { data: accounts, error: e2 } = await supabase
-        .from('expense_accounts')
-        .select('id, record_id, codigo, cuenta, debito, credito, orden')
-        .in('record_id', recIds)
-        .order('orden')
-      if (e2) throw e2
+      const accounts = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', recIds, q => q.order('orden'))
 
       const accsByRecord: Record<number, any[]> = {}
       ;(accounts || []).forEach((a: any) => {
@@ -323,8 +319,9 @@ export default function EstadoEgresosPage() {
     setPassInput(''); setPassError(''); setShowPassModal(true)
   }
 
-  function confirmarPassword() {
-    if (passInput !== PASSWORD_ACTUALIZAR) { setPassError('Contraseña incorrecta.'); return }
+  async function confirmarPassword() {
+    setPassError('Verificando...')
+    if (!(await verificarClave('edicion', passInput))) { setPassError('Contraseña incorrecta.'); return }
     setModoEdicion(true)
     setShowPassModal(false)
     setPassInput(''); setPassError('')
@@ -392,15 +389,7 @@ export default function EstadoEgresosPage() {
 
   // ── Exportar Excel (año completo, una hoja por mes) ───────────────────────
   async function exportarExcel() {
-    if (!(window as any).ExcelJS) {
-      await new Promise<void>((res, rej) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/exceljs/dist/exceljs.min.js'
-        s.onload = () => res(); s.onerror = rej
-        document.head.appendChild(s)
-      })
-    }
-    const ExcelJS = (window as any).ExcelJS
+    const ExcelJS = await cargarExcelJS()
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Estudio Contable Ábaco'
 
@@ -431,21 +420,17 @@ export default function EstadoEgresosPage() {
     }
 
     // Todos los registros del año
-    const { data: allRecords } = await supabase
+    const allRecords: any[] = await traerTodo(() => supabase
       .from('expense_records')
       .select('id, numero, fecha, pagado_a, concepto, valor, doc_tipo, doc_numero')
       .gte('fecha', `${añoSel}-01-01`)
       .lte('fecha', `${añoSel}-12-31`)
-      .order('fecha').order('numero')
+      .order('fecha').order('numero'))
 
     if (!allRecords?.length) return
 
     const allRecIds = allRecords.map((r: any) => r.id)
-    const { data: allAccounts } = await supabase
-      .from('expense_accounts')
-      .select('id, record_id, codigo, cuenta, debito, credito, orden')
-      .in('record_id', allRecIds)
-      .order('orden')
+    const allAccounts = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', allRecIds, q => q.order('orden'))
 
     const accByRec: Record<number, any[]> = {}
     ;(allAccounts || []).forEach((a: any) => {
