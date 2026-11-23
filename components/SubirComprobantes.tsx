@@ -189,7 +189,7 @@ export default function SubirComprobantes() {
         .sc-go:disabled{opacity:.45;cursor:not-allowed}
       `}</style>
 
-      <div
+      <div data-ayuda="eg-ia"
         className={`sc-drop ${arrastrando ? 'on' : ''}`}
         role="button"
         tabIndex={0}

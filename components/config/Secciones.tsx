@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { traerTodo } from '@/lib/db'
 import { cargarExcelJS } from '@/lib/excel'
-import { cambiarClave, verificarClave } from '@/lib/clave'
+import { cambiarClave, verificarClaveDetalle, MSJ_SIN_CLAVE } from '@/lib/clave'
 import { leerTema, guardarTema, type Tema } from '@/lib/tema'
 import LogoApp from '@/components/LogoApp'
 import {
@@ -588,7 +588,9 @@ function SaldosIniciales({ soloLectura }: { soloLectura: boolean }) {
           <input className="field-input" type="password" placeholder="Clave de saldo inicial" value={clave} onChange={e => setClave(e.target.value)} />
           <button className="btn btn-primary" disabled={ocupado} onClick={() => correr(async () => {
             if (!monto) return 'Escribe el monto.'
-            if (!(await verificarClave('saldo', clave))) return 'La clave de saldo inicial no es correcta.'
+            const estadoClave = await verificarClaveDetalle('saldo', clave)
+            if (estadoClave === 'sinClave') return MSJ_SIN_CLAVE
+            if (estadoClave !== 'ok') return 'La clave de saldo inicial no es correcta.'
             const { error } = await supabase.from('saldos_iniciales').upsert({ anio, monto: soloNum(monto), actualizado: new Date().toISOString() })
             if (error) throw error
             setMonto(''); setClave(''); await cargar()
@@ -729,7 +731,7 @@ function TarjetaClave({ tipo, titulo, desc, soloLectura }: { tipo: 'edicion' | '
       <b>{titulo}</b>
       <p className="cf-help">{desc}</p>
       <Aviso />
-      <input className="field-input" type="password" placeholder="Clave actual" value={a} disabled={soloLectura} onChange={e => setA(e.target.value)} />
+      <input className="field-input" type="password" placeholder="Clave actual (vacía si es la primera vez)" value={a} disabled={soloLectura} onChange={e => setA(e.target.value)} />
       <input className="field-input" type="password" placeholder="Clave nueva (mín. 6)" value={n} disabled={soloLectura} onChange={e => setN(e.target.value)} />
       <input className="field-input" type="password" placeholder="Repite la clave nueva" value={c} disabled={soloLectura} onChange={e => setC(e.target.value)} />
       <button className="btn btn-primary btn-sm" disabled={ocupado || soloLectura || !cfg.conBaseDatos} onClick={() => correr(async () => {

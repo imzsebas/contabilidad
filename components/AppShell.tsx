@@ -7,6 +7,7 @@ import { TOKENS_V3, SHELL_V3 } from '@/lib/estilosV3'
 import { cargarConfig, useConfig } from '@/lib/configuracion'
 import { aplicarTema, seguirSistema } from '@/lib/tema'
 import LogoApp from '@/components/LogoApp'
+import Ayuda from '@/components/ayuda/Ayuda'
 
 /*
  * Contenedor común de todas las páginas de /dashboard:
@@ -15,7 +16,7 @@ import LogoApp from '@/components/LogoApp'
  * No consulta ni modifica datos, salvo "Exportar paquete contable", que solo lee.
  */
 
-type Item = { label: string; icon: string; href?: string; action?: 'paquete'; soon?: boolean; match?: string; soloTesorero?: boolean }
+type Item = { label: string; icon: string; href?: string; action?: 'paquete' | 'ayuda'; soon?: boolean; match?: string; soloTesorero?: boolean }
 type Grupo = { titulo: string; items: Item[] }
 
 const I = {
@@ -29,6 +30,7 @@ const I = {
   zip:    'M12 3v12M7 10l5 5 5-5M4 21h16',
   people: 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21c0-3.9 3.1-7 7-7s7 3.1 7 7M16 3.1a4 4 0 0 1 0 7.8M22 21c0-3-1.8-5.5-4.5-6.5',
   gear:   'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1',
+  help:   'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
 }
 
 const GRUPOS: Grupo[] = [
@@ -48,6 +50,9 @@ const GRUPOS: Grupo[] = [
   { titulo: 'Administración', items: [
     { label: 'Miembros',      icon: I.people, href: '/dashboard/miembros' },
     { label: 'Configuración', icon: I.gear, href: '/dashboard/configuracion' },
+  ]},
+  { titulo: 'Apoyo', items: [
+    { label: 'Ayuda', icon: I.help, action: 'ayuda' },
   ]},
 ]
 
@@ -85,6 +90,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [etapa, setEtapa] = useState('')
   const [cedula, setCedula] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [ayudaAbierta, setAyudaAbierta] = useState(false)
   const perfilRef = useRef<HTMLDivElement>(null)
   const cfg = useConfig()
 
@@ -132,6 +138,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   async function clicItem(it: Item) {
     if (it.soon) return
+    if (it.action === 'ayuda') {
+      setLateralAbierto(false)
+      setAyudaAbierta(true)
+      return
+    }
     if (it.action === 'paquete') {
       if (exportando) return
       setExportando(true)
@@ -185,6 +196,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               aria-haspopup="menu"
               aria-expanded={menuPerfil}
               aria-label="Abrir menú de perfil"
+              data-ayuda="menu-perfil"
               onClick={() => setMenuPerfil(v => !v)}
             >
               <span className="ico"><Icono d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-7 8-7s8 3 8 7" /></span>
@@ -200,12 +212,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   </span>
                 </div>
                 <div className="v3-menu-list">
-                  <button type="button" role="menuitem" className="v3-menu-item" onClick={() => { setMenuPerfil(false); router.push('/dashboard/perfil') }}>
+                  <button type="button" role="menuitem" className="v3-menu-item" data-ayuda="menu-perfil-ir" onClick={() => { setMenuPerfil(false); router.push('/dashboard/perfil') }}>
                     <Icono d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 3.6-7 8-7s8 3 8 7" />
                     Perfil
                   </button>
                   <div className="v3-menu-sep" />
-                  <button type="button" role="menuitem" className="v3-menu-item danger" onClick={salir}>
+                  <button type="button" role="menuitem" className="v3-menu-item danger" data-ayuda="menu-salir" onClick={salir}>
                     <Icono d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" />
                     Cerrar sesión
                   </button>
@@ -231,6 +243,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   type="button"
                   className={`v3-nav-item ${activo(it) ? 'active' : ''}`}
                   aria-current={activo(it) ? 'page' : undefined}
+                  data-ayuda={it.action === 'paquete' ? 'menu-paquete' : it.action === 'ayuda' ? 'menu-ayuda' : undefined}
                   disabled={it.soon || (it.action === 'paquete' && exportando)}
                   onClick={() => clicItem(it)}
                 >
@@ -248,6 +261,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="v3-content">{children}</div>
       </div>
       </div>
+
+      {/* Ayuda: preguntas de la página actual y guía paso a paso */}
+      <Ayuda abierta={ayudaAbierta} onCerrar={() => setAyudaAbierta(false)} titulo={miga[2]} />
 
       {exportando && (
         <div className="v3-export" role="status" aria-live="polite">

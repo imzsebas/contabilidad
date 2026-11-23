@@ -3,11 +3,13 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo, traerPorIds } from '@/lib/db'
-import { verificarClave } from '@/lib/clave'
+import { verificarClaveDetalle, mensajeClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
 import { BASE_V3 } from '@/lib/estilosV3'
 import { textosIglesia } from '@/lib/configuracion'
 import NombreIglesia from '@/components/NombreIglesia'
+import { numeroALetras } from '@/lib/letras'
+import { msgError, type Celda, type ExpenseAccount, type ExpenseRecord, type FilaExcel, type Horizontal, type ValorCelda } from '@/lib/tipos'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -43,7 +45,7 @@ const MESES_NOM: Record<string,string> = {
 function fmt(n: number) { return n.toLocaleString('es-CO') }
 
 // Extrae cuenta y SC desde el código PUC (ej: "5135-30" → cuenta:5135, sc:30)
-function parseCodigo(codigo: string): { cuenta: number | string; sc: number | string } {
+function parseCodigo(codigo: string | null): { cuenta: number | string; sc: number | string } {
   if (!codigo) return { cuenta: '', sc: '' }
   const parts = codigo.replace(/[^0-9\-]/g, '').split('-')
   return {
@@ -175,17 +177,17 @@ export default function EstadoEgresosPage() {
 
   // ── Cargar años disponibles ───────────────────────────────────────────────
   useEffect(() => {
-    traerTodo(() => supabase.from('expense_records').select('id, fecha').order('fecha')).then((data: any) => {
+    traerTodo(() => supabase.from('expense_records').select('id, fecha').order('fecha')).then((data) => {
       if (!data) return
-      const set  = new Set(data.map((r: any) => r.fecha.slice(0, 4)))
+      const set  = new Set(data.map((r) => r.fecha.slice(0, 4)))
       const list = Array.from(set).sort() as string[]
       setAños(list)
       if (list.length) {
         setAñoSel(list[list.length - 1])
         const lastYear = list[list.length - 1]
         const mesesDelAño = data
-          .filter((r: any) => r.fecha.startsWith(lastYear))
-          .map((r: any) => r.fecha.slice(5, 7))
+          .filter((r) => r.fecha.startsWith(lastYear))
+          .map((r) => r.fecha.slice(5, 7))
         const lastMes = mesesDelAño.sort().pop()
         if (lastMes) setMesSel(lastMes)
       }
@@ -203,20 +205,20 @@ export default function EstadoEgresosPage() {
       const hasta     = `${añoSel}-${mesSel}-${String(ultimoDia).padStart(2,'0')}`
 
       // 1. Registros del mes
-      const records: any[] = await traerTodo(() => supabase
+      const records = await traerTodo<ExpenseRecord>(() => supabase
         .from('expense_records')
         .select('id, numero, fecha, pagado_a, concepto, valor, doc_tipo, doc_numero')
         .gte('fecha', desde).lte('fecha', hasta)
         .order('fecha').order('numero'))
       if (!records?.length) { setGrupos([]); return }
 
-      const recIds = records.map((r: any) => r.id)
+      const recIds = records.map((r) => r.id)
 
       // 2. Cuentas PUC de esos registros
-      const accounts = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', recIds, q => q.order('orden'))
+      const accounts = await traerPorIds<ExpenseAccount>('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', recIds, q => q.order('orden'))
 
-      const accsByRecord: Record<number, any[]> = {}
-      ;(accounts || []).forEach((a: any) => {
+      const accsByRecord: Record<number, ExpenseAccount[]> = {}
+      ;(accounts || []).forEach((a) => {
         if (!accsByRecord[a.record_id]) accsByRecord[a.record_id] = []
         accsByRecord[a.record_id].push(a)
       })
@@ -225,16 +227,16 @@ export default function EstadoEgresosPage() {
       const grupos: GrupoEgreso[] = []
 
       for (const rec of records) {
-        const accs = (accsByRecord[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
+        const accs = (accsByRecord[rec.id] || []).sort((a, b) => a.orden - b.orden)
         const filas: FilaLibro[] = []
 
         // Ignorar filas TOTAL y filas con valor 0 en ambas columnas
-        const accsValidos = accs.filter((a: any) =>
+        const accsValidos = accs.filter((a) =>
           a.codigo?.toUpperCase() !== 'TOTAL' && (a.debito > 0 || a.credito > 0)
         )
 
         // Fila principal: primer débito (orden 0)
-        const principal = accsValidos.find((a: any) => a.debito > 0 && a.orden === 0)
+        const principal = accsValidos.find((a) => a.debito > 0 && a.orden === 0)
         if (principal) {
           const { cuenta, sc } = parseCodigo(principal.codigo)
           filas.push({
@@ -257,8 +259,8 @@ export default function EstadoEgresosPage() {
 
         // Débitos secundarios (orden > 0): se muestran como CR (ej: RTE FTE)
         accsValidos
-          .filter((a: any) => a.debito > 0 && a.orden > 0)
-          .forEach((acc: any) => {
+          .filter((a) => a.debito > 0 && a.orden > 0)
+          .forEach((acc) => {
             const { cuenta, sc } = parseCodigo(acc.codigo)
             filas.push({
               tc:          2,
@@ -280,8 +282,8 @@ export default function EstadoEgresosPage() {
 
         // Créditos reales (neto de caja, cuenta 1105, etc.)
         accsValidos
-          .filter((a: any) => a.credito > 0)
-          .forEach((acc: any) => {
+          .filter((a) => a.credito > 0)
+          .forEach((acc) => {
             const { cuenta, sc } = parseCodigo(acc.codigo)
             filas.push({
               tc:          2,
@@ -307,8 +309,8 @@ export default function EstadoEgresosPage() {
       }
 
       setGrupos(grupos)
-    } catch (e: any) {
-      setError(e.message || 'Error cargando datos')
+    } catch (e) {
+      setError(msgError(e) || 'Error cargando datos')
     } finally {
       setLoading(false)
     }
@@ -324,7 +326,8 @@ export default function EstadoEgresosPage() {
 
   async function confirmarPassword() {
     setPassError('Verificando...')
-    if (!(await verificarClave('edicion', passInput))) { setPassError('Contraseña incorrecta.'); return }
+    const estadoClave = await verificarClaveDetalle('edicion', passInput)
+    if (estadoClave !== 'ok') { setPassError(mensajeClave(estadoClave)); return }
     setModoEdicion(true)
     setShowPassModal(false)
     setPassInput(''); setPassError('')
@@ -359,7 +362,32 @@ export default function EstadoEgresosPage() {
       ...g,
       filas: g.filas.map(f => f.accountId === accountId ? { ...f, valor: nuevoValor } : f)
     })))
+    // El "valor" y el "valor en letras" del comprobante deben seguir a las cuentas;
+    // si no, al reimprimirlo sale el valor viejo.
+    const recordId = grupos.flatMap(g => g.filas).find(f => f.accountId === accountId)?.recordId
+    if (recordId) {
+      const aviso = await sincronizarValorComprobante(recordId)
+      if (aviso) setErrorFila(aviso)
+    }
     setGuardandoId(null)
+  }
+
+  // Valor pagado = lo que sale de caja o bancos (créditos de las cuentas 11xx).
+  // Es la misma regla que cumplen todos los comprobantes guardados.
+  async function sincronizarValorComprobante(recordId: number): Promise<string> {
+    const [{ data: accs, error: eA }, { data: rec, error: eR }] = await Promise.all([
+      supabase.from('expense_accounts').select('codigo, credito').eq('record_id', recordId),
+      supabase.from('expense_records').select('valor').eq('id', recordId).single(),
+    ])
+    if (eA || eR || !accs || !rec) return 'El valor de la cuenta se guardó, pero no se pudo actualizar el valor del comprobante. Recarga la página y revisa.'
+    const pagado = accs
+      .filter(a => String(a.codigo || '').replace(/\D/g, '').startsWith('11'))
+      .reduce((t, a) => t + (Number(a.credito) || 0), 0)
+    if (pagado <= 0 || pagado === Number(rec.valor)) return ''
+    const { error } = await supabase.from('expense_records')
+      .update({ valor: pagado, en_letras: numeroALetras(pagado) }).eq('id', recordId)
+    if (error) return 'El valor de la cuenta se guardó, pero no se pudo actualizar el valor del comprobante: ' + error.message
+    return ''
   }
 
   async function actualizarFecha(recordId: number, nuevaFecha: string) {
@@ -399,22 +427,22 @@ export default function EstadoEgresosPage() {
     const ROJO  = 'FFC0392B'
     const LINEA = 'FFB0B0B0'
 
-    function titulo(cell: any, val: string) {
+    function titulo(cell: Celda, val: string) {
       cell.value = val
       cell.font  = { bold: true, color: { argb: ROJO }, size: 11, name: 'Arial' }
       cell.alignment = { horizontal: 'center', vertical: 'middle' }
     }
-    function cabecera(cell: any, val: string) {
+    function cabecera(cell: Celda, val: string) {
       cell.value = val
       cell.font  = { bold: true, color: { argb: ROJO }, size: 10, name: 'Arial' }
       cell.alignment = { horizontal: 'center', vertical: 'middle' }
     }
-    function dato(cell: any, val: any, align = 'left', bold = false, color = '00000000') {
+    function dato(cell: Celda, val: ValorCelda, align: Horizontal = 'left', bold = false, color = '00000000') {
       cell.value = val
       cell.font  = { size: 9, name: 'Arial', bold, color: { argb: color } }
       cell.alignment = { horizontal: align, vertical: 'middle' }
     }
-    function divisor(row: any) {
+    function divisor(row: FilaExcel) {
       for (let c = 1; c <= 11; c++) {
         row.getCell(c).value = '----'
         row.getCell(c).font  = { size: 8, color: { argb: LINEA }, name: 'Arial' }
@@ -423,7 +451,7 @@ export default function EstadoEgresosPage() {
     }
 
     // Todos los registros del año
-    const allRecords: any[] = await traerTodo(() => supabase
+    const allRecords = await traerTodo<ExpenseRecord>(() => supabase
       .from('expense_records')
       .select('id, numero, fecha, pagado_a, concepto, valor, doc_tipo, doc_numero')
       .gte('fecha', `${añoSel}-01-01`)
@@ -432,17 +460,17 @@ export default function EstadoEgresosPage() {
 
     if (!allRecords?.length) return
 
-    const allRecIds = allRecords.map((r: any) => r.id)
-    const allAccounts = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', allRecIds, q => q.order('orden'))
+    const allRecIds = allRecords.map((r) => r.id)
+    const allAccounts = await traerPorIds<ExpenseAccount>('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', allRecIds, q => q.order('orden'))
 
-    const accByRec: Record<number, any[]> = {}
-    ;(allAccounts || []).forEach((a: any) => {
+    const accByRec: Record<number, ExpenseAccount[]> = {}
+    ;(allAccounts || []).forEach((a) => {
       if (!accByRec[a.record_id]) accByRec[a.record_id] = []
       accByRec[a.record_id].push(a)
     })
 
     // Agrupar registros por mes
-    const porMes: Record<string, any[]> = {}
+    const porMes: Record<string, ExpenseRecord[]> = {}
     for (const rec of allRecords) {
       const mes = rec.fecha.slice(5, 7)
       if (!porMes[mes]) porMes[mes] = []
@@ -475,11 +503,11 @@ export default function EstadoEgresosPage() {
       let rn = 8
       for (let gi = 0; gi < recsDelMes.length; gi++) {
         const rec  = recsDelMes[gi]
-        const accs = (accByRec[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
+        const accs = (accByRec[rec.id] || []).sort((a, b) => a.orden - b.orden)
         const [y, m, d] = rec.fecha.split('-')
         const fStr = `${d}/${m}/${y}`
 
-        accs.forEach((acc: any, idx: number) => {
+        accs.forEach((acc, idx: number) => {
           const { cuenta, sc } = parseCodigo(acc.codigo)
           const esCredito = acc.credito > 0 && acc.debito === 0
           const valor     = esCredito ? acc.credito : acc.debito
@@ -554,7 +582,7 @@ export default function EstadoEgresosPage() {
 
         {/* Pestañas años */}
         {años.length > 0 && (
-          <div className="tabs-años">
+          <div data-ayuda="ee-anios" className="tabs-años">
             {años.map(a => (
               <button key={a} className={`tab-año ${a === añoSel ? 'active' : ''}`} onClick={() => setAñoSel(a)}>{a}</button>
             ))}
@@ -562,7 +590,7 @@ export default function EstadoEgresosPage() {
         )}
 
         {/* Pestañas meses */}
-        <div className="tabs-meses-wrap">
+        <div data-ayuda="ee-meses" className="tabs-meses-wrap">
           {MESES.map((m, i) => (
             <button key={m} className={`tab-mes ${m === mesSel ? 'active' : ''}`} onClick={() => setMesSel(m)}>
               {MESES_TAB[i]}
@@ -590,11 +618,11 @@ export default function EstadoEgresosPage() {
               )}
             </div>
             <div style={{display:'flex',gap:10}}>
-              <button className={`btn-actualizar ${modoEdicion ? 'active' : ''}`} onClick={abrirActualizar} disabled={loading || grupos.length === 0}>
+              <button data-ayuda="ee-actualizar" className={`btn-actualizar ${modoEdicion ? 'active' : ''}`} onClick={abrirActualizar} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
                 {modoEdicion ? 'Finalizar edición' : 'Actualizar'}
               </button>
-              <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
+              <button data-ayuda="ee-excel" className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
                 Exportar Excel
               </button>
@@ -612,7 +640,7 @@ export default function EstadoEgresosPage() {
           ) : grupos.length === 0 ? (
             <div className="empty">No hay egresos para {MESES_NOM[mesSel]} {añoSel}</div>
           ) : (
-            <div className="table-wrap">
+            <div data-ayuda="ee-tabla" className="table-wrap">
               <table>
                 <thead>
                   <tr>

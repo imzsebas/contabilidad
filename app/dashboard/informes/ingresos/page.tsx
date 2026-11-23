@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo, traerPorIds } from '@/lib/db'
@@ -7,6 +7,7 @@ import { cargarExcelJS } from '@/lib/excel'
 import { BASE_V3 } from '@/lib/estilosV3'
 import { textosIglesia } from '@/lib/configuracion'
 import NombreIglesia from '@/components/NombreIglesia'
+import { type IncomeColumn, type IncomeDistribution, type IncomeRecord, type IncomeRow, type IncomeValue, type ValorCelda, type OpcionesCelda } from '@/lib/tipos'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -81,7 +82,7 @@ export default function InformeIngresos() {
         hasta = fechaHasta
       }
 
-      const records: any[] = await traerTodo(() => supabase
+      const records = await traerTodo<IncomeRecord>(() => supabase
         .from('income_records')
         .select('id, fecha, total')
         .gte('fecha', desde)
@@ -98,15 +99,15 @@ export default function InformeIngresos() {
       const ids = records.map(r => r.id)
 
       // Columnas, filas y distribución de esos registros
-      const [cols, rows, dist]: any[][] = await Promise.all([
-        traerPorIds('income_columns', 'id, record_id, nombre, codigo_puc', 'record_id', ids),
-        traerPorIds('income_rows', 'id, record_id', 'record_id', ids),
-        traerPorIds('income_distribution', 'id, record_id, concepto, porcentaje, monto_aproximado', 'record_id', ids),
+      const [cols, rows, dist] = await Promise.all([
+        traerPorIds<IncomeColumn>('income_columns', 'id, record_id, nombre, codigo_puc', 'record_id', ids),
+        traerPorIds<IncomeRow>('income_rows', 'id, record_id', 'record_id', ids),
+        traerPorIds<IncomeDistribution>('income_distribution', 'id, record_id, concepto, porcentaje, monto_aproximado', 'record_id', ids),
       ])
 
       // Valores: SOLO los de esas filas (antes se pedía la tabla completa
       // y, al pasar de 1.000 filas, los ingresos recientes salían en cero)
-      const vals: any[] = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', rows.map((r: any) => r.id))
+      const vals = await traerPorIds<IncomeValue>('income_values', 'id, row_id, column_id, monto', 'row_id', rows.map((r) => r.id))
 
       // Construir registros enriquecidos
       const enriched: Registro[] = records.map(rec => {
@@ -120,7 +121,7 @@ export default function InformeIngresos() {
           })
           return {
             nombre: col.nombre,
-            codigoPUC: col.codigo_puc,
+            codigoPUC: col.codigo_puc ?? "",
             total: colRows.reduce((a, b) => a + b, 0),
           }
         })
@@ -563,7 +564,7 @@ export default function InformeIngresos() {
     ws1.getCell('A1').border = allB
     ws1.getRow(1).height = 30
 
-    const setCell = (addr: string, val: any, opts: any = {}) => {
+    const setCell = (addr: string, val: ValorCelda, opts: OpcionesCelda = {}) => {
       const c = ws1.getCell(addr)
       c.value = val
       c.border = allB
@@ -720,7 +721,7 @@ export default function InformeIngresos() {
           </div>
         </div>
         {buscado && registros.length > 0 && (
-          <div className="actions-bar">
+          <div data-ayuda="inf-exportar" className="actions-bar">
             <button className="btn btn-pdf" onClick={exportarPDF}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               PDF
@@ -735,7 +736,7 @@ export default function InformeIngresos() {
 
       <div className="content">
         {/* Filtros */}
-        <div className="card">
+        <div className="card" data-ayuda="inf-filtro">
           <div className="card-title">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filtrar registros
@@ -768,7 +769,7 @@ export default function InformeIngresos() {
                 <input type="date" className="input" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}/>
               </div>
             </>}
-            <button className="btn-buscar" onClick={cargar} disabled={loading}>
+            <button data-ayuda="inf-buscar" className="btn-buscar" onClick={cargar} disabled={loading}>
               {loading
                 ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{animation:'spin .7s linear infinite'}}><path d="M21 12a9 9 0 1 1-18 0"/></svg>Cargando...</>
                 : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Generar informe</>
@@ -831,7 +832,7 @@ export default function InformeIngresos() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
               Detalle de registros — {registros.length} {registros.length === 1 ? 'registro' : 'registros'}
             </div>
-            <div className="table-wrap">
+            <div data-ayuda="inf-tabla" className="table-wrap">
               <table>
                 <thead>
                   <tr>

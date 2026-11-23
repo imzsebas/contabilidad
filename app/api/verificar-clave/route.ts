@@ -2,19 +2,20 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 
 /*
  * Verifica las claves de "modo edición" y "saldo inicial" en el SERVIDOR.
- * Antes estaban escritas en el código de las páginas y cualquiera podía
- * verlas desde el navegador.
  *
- * Configura en Vercel (Settings → Environment Variables), SIN el prefijo NEXT_PUBLIC_:
+ * Se usan solo si la clave no se ha creado desde Configuración (ahí queda
+ * guardada cifrada en la base de datos, que es lo recomendado).
+ *
+ * Opcional en Vercel (Settings → Environment Variables), SIN el prefijo NEXT_PUBLIC_:
  *   CLAVE_EDICION   → clave para editar en Estado de Ingresos / Egresos
  *   CLAVE_SALDO     → clave para ajustar el saldo inicial del Libro Auxiliar
  *
- * Mientras no las configures se usan las claves anteriores, para que nada
- * deje de funcionar. Cámbialas apenas puedas.
+ * Ya no hay claves de respaldo escritas aquí: estaban a la vista en GitHub.
+ * Si no hay variable, responde { sinConfigurar: true }.
  */
 const CLAVES: Record<string, string | undefined> = {
-  edicion: process.env.CLAVE_EDICION || '1062955748',
-  saldo:   process.env.CLAVE_SALDO   || 'Ctbd123',
+  edicion: process.env.CLAVE_EDICION || undefined,
+  saldo:   process.env.CLAVE_SALDO   || undefined,
 }
 
 function iguales(a: string, b: string) {
@@ -32,8 +33,10 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ ok: false }, { status: 400 })
   }
+  if (tipo !== 'edicion' && tipo !== 'saldo') return Response.json({ ok: false }, { status: 400 })
+
   const esperada = CLAVES[tipo]
-  if (!esperada) return Response.json({ ok: false }, { status: 400 })
+  if (!esperada) return Response.json({ ok: false, sinConfigurar: true })
 
   // Pequeña pausa para que no se puedan probar miles de claves rápido
   await new Promise(r => setTimeout(r, 400))

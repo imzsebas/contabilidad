@@ -70,6 +70,8 @@ export default function InicioPage() {
       if (u?.name) setNombre(String(u.name).split(/\s+/)[0])
     } catch { /* sin nombre */ }
     cargar()
+  // Se carga una sola vez al abrir el Inicio
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Días del mapa: 53 semanas hasta hoy (domingo a sábado), como en GitHub
@@ -201,7 +203,7 @@ export default function InicioPage() {
           <span className="ini-anio">{anio}</span>
           {cfg.rol !== 'consulta' && (
             <div className="ini-reg">
-              <button type="button" className="ini-btn-verde" onClick={() => setMenuReg(v => !v)} aria-expanded={menuReg} aria-haspopup="menu">
+              <button data-ayuda="ini-registrar" type="button" className="ini-btn-verde" onClick={() => setMenuReg(v => !v)} aria-expanded={menuReg} aria-haspopup="menu">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
                 Registrar
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
@@ -220,7 +222,7 @@ export default function InicioPage() {
       {error && <div className="alert alert-error">{error}</div>}
 
       {/* Tarjetas */}
-      <div className="ini-kpis">
+      <div data-ayuda="ini-kpis" className="ini-kpis">
         <button className="ini-kpi" onClick={() => router.push('/dashboard/informes/ingresos')}>
           <span className="l">Ingresos del año</span>
           <b className={'v ok' + (loading ? ' sk' : '')}>{fmt(r.ingresosAnio)}</b>
@@ -248,7 +250,7 @@ export default function InicioPage() {
         <div className="ini-card-h">
           <span><b>{fmt(totalMapa)}</b> recibidos en los últimos 12 meses <span className="muted">· {diasConIngreso} días con ingresos</span></span>
         </div>
-        <div className="ini-mapa-wrap" ref={mapaRef} onMouseLeave={() => setTip(null)}>
+        <div data-ayuda="ini-mapa" className="ini-mapa-wrap" ref={mapaRef} onMouseLeave={() => setTip(null)}>
           <div className="ini-mapa">
             <div className="ini-dias" aria-hidden="true">
               <span /><span>Lun</span><span /><span>Mié</span><span /><span>Vie</span><span />
@@ -287,7 +289,7 @@ export default function InicioPage() {
 
       <div className="ini-dos">
         {/* Últimos movimientos */}
-        <section className="ini-card">
+        <section className="ini-card" data-ayuda="ini-movimientos">
           <div className="ini-card-h"><b>Últimos movimientos</b></div>
           {loading ? <div className="ini-vacio">Cargando…</div>
             : r.movimientos.length === 0 ? <div className="ini-vacio">Aún no hay movimientos este año.</div>

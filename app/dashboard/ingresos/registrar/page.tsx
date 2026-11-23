@@ -8,6 +8,7 @@ import { BASE_V3 } from '@/lib/estilosV3'
 import { cargarConfig, type IngresosCfg } from '@/lib/configuracion'
 import { textosIglesia, sinTildes } from '@/lib/configuracion'
 import NombreIglesia from '@/components/NombreIglesia'
+import { msgError, type Celda, type Horizontal, type ValorCelda } from '@/lib/tipos'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface Column  { id: string; nombre: string; codigoPUC: string }
@@ -155,7 +156,10 @@ function AutocompleteInput({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  useEffect(() => { setHighlightIndex(0) }, [value])
+  // Al cambiar lo escrito, la selección vuelve a la primera opción
+  // (se hace durante el render, como recomienda React, en vez de en un efecto)
+  const [valorPrevio, setValorPrevio] = useState(value)
+  if (value !== valorPrevio) { setValorPrevio(value); setHighlightIndex(0) }
 
   // ✅ FIX: un solo update atómico — nombre + memberId juntos, sin closures separados
   function handleSelect(m: Member) {
@@ -164,7 +168,7 @@ function AutocompleteInput({
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+    <div data-ayuda="ing-aportante" ref={ref} style={{ position: 'relative', width: '100%' }}>
       <input
         className="nombre-input"
         placeholder="Nombre del aportante..."
@@ -265,8 +269,8 @@ export default function RegistrarIngreso() {
       .select('id, nombre, cedula')
       .eq('activo', true)
       .order('nombre'))
-      .then((data: any) => setMembers(data))
-      .catch((e: any) => setError('Error cargando miembros: ' + (e.message || e)))
+      .then((data) => setMembers(data))
+      .catch((e) => setError('Error cargando miembros: ' + (e.message || e)))
   }, [])
 
   const refreshDist = useCallback((nextCols: Column[], nextRows: Row[], prevDist: DistItem[]) => {
@@ -471,15 +475,15 @@ export default function RegistrarIngreso() {
       if (e5) throw e5
 
       setSaved(true)
-    } catch (e: any) {
+    } catch (e) {
       if (recIdCreado !== null) {
         // Parte del registro ya quedó en la base de datos. NO se borra nada
         // automáticamente; se bloquea un segundo guardado para no duplicarlo.
         setSaved(true)
-        setError(`${e.message || 'Error inesperado al guardar'} — ATENCIÓN: el registro del ${fecha} quedó guardado a medias (ID ${recIdCreado}). ` +
+        setError(`${msgError(e) || 'Error inesperado al guardar'} — ATENCIÓN: el registro del ${fecha} quedó guardado a medias (ID ${recIdCreado}). ` +
           'No lo vuelvas a guardar: revísalo y complétalo en Estado de Ingresos.')
       } else {
-        setError(e.message || 'Error inesperado al guardar')
+        setError(msgError(e) || 'Error inesperado al guardar')
       }
     } finally {
       setSaving(false)
@@ -568,13 +572,13 @@ export default function RegistrarIngreso() {
     const thinBorder = { style: 'thin' as const, color: { argb: 'FF000000' } }
     const allBorders = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder }
 
-    function hdrStyle(cell: any, bg: string, color: string = BLANCO) {
+    function hdrStyle(cell: Celda, bg: string, color: string = BLANCO) {
       cell.font = { bold: true, color: { argb: color }, size: 11 }
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }
       cell.alignment = { horizontal: 'center', vertical: 'middle' }
       cell.border = allBorders
     }
-    function dataCell(cell: any, value: any, numFmt?: string, bold = false, align = 'left') {
+    function dataCell(cell: Celda, value: ValorCelda, numFmt?: string, bold = false, align: Horizontal = 'left') {
       cell.value = value
       if (numFmt) cell.numFmt = numFmt
       cell.font = { bold, size: 10 }
@@ -783,7 +787,7 @@ export default function RegistrarIngreso() {
       {/* Barra compacta fija: fecha + total en vivo, siempre visible */}
       <div className="sticky-bar">
         <div className="sticky-bar-inner">
-          <div className="sticky-fecha">
+          <div data-ayuda="ing-fecha" className="sticky-fecha">
             <input type="date" className="fecha-input" value={fecha} onChange={e => setFecha(e.target.value)}/>
             <span className="sticky-fecha-hint">Fecha del registro</span>
           </div>
@@ -805,7 +809,7 @@ export default function RegistrarIngreso() {
             Aportantes
             <span className="tab-badge">{rows.length}</span>
           </button>
-          <button className={`tab-btn ${tab === 'distribucion' ? 'active' : ''}`} onClick={() => setTab('distribucion')}>
+          <button data-ayuda="ing-tab-distribucion" className={`tab-btn ${tab === 'distribucion' ? 'active' : ''}`} onClick={() => setTab('distribucion')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             Distribución
           </button>
@@ -823,12 +827,12 @@ export default function RegistrarIngreso() {
               </span>
               <div className="table-card-actions">
                 <div style={{position:'relative'}}>
-                  <button className="btn-add-secondary" onClick={() => setShowAddCol(v => !v)}>
+                  <button data-ayuda="ing-agregar-columna" className="btn-add-secondary" onClick={() => setShowAddCol(v => !v)}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     Columna
                   </button>
                   {showAddCol && (
-                    <div className="popover-addcol" onMouseLeave={() => setShowAddCol(false)}>
+                    <div data-ayuda="ing-form-columna" className="popover-addcol" onMouseLeave={() => setShowAddCol(false)}>
                       <div className="field-wrap">
                         <span className="field-label">Nombre</span>
                         <input className="text-input" placeholder="Ej: Misiones" value={newNombre} onChange={e => setNewNombre(e.target.value)} autoFocus/>
@@ -844,7 +848,7 @@ export default function RegistrarIngreso() {
                     </div>
                   )}
                 </div>
-                <button className="btn-add-secondary" onClick={agregarFila}>
+                <button data-ayuda="ing-agregar-fila" className="btn-add-secondary" onClick={agregarFila}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Agregar fila
                 </button>
@@ -885,7 +889,7 @@ export default function RegistrarIngreso() {
                             members={members}
                             onUpdate={patch => updateRow(row.id, patch)}
                           />
-                          <button
+                          <button data-ayuda="ing-nuevo-miembro"
                             type="button"
                             className="btn-add-member"
                             title="Agregar nuevo miembro"
@@ -895,7 +899,7 @@ export default function RegistrarIngreso() {
                       </td>
                       <td className="v3-mono" style={{textAlign:'center',color:'var(--muted)',fontSize:12}}>{i+1}</td>
                       {cols.map(c => (
-                        <td key={c.id}>
+                        <td key={c.id} data-ayuda="ing-valor">
                           <input
                             className="num-input"
                             type="text" inputMode="numeric"
@@ -937,7 +941,7 @@ export default function RegistrarIngreso() {
                 Distribución de ingresos
               </span>
             </div>
-            <div className="add-col-row" style={{marginBottom:16}}>
+            <div data-ayuda="ing-agregar-concepto" className="add-col-row" style={{marginBottom:16}}>
               <div className="field-wrap">
                 <span className="field-label">Concepto</span>
                 <input className="text-input" placeholder="Ej: Fondo construcción" value={newConcepto} onChange={e => setNewConcepto(e.target.value)}/>
@@ -1004,7 +1008,7 @@ export default function RegistrarIngreso() {
                         ) : (
                           <div className="pct-summary" onClick={() => setEditingDistId(item.id)}>
                             <span>{item.tramos.map(t => `${t.porcentaje}% ${baseLabel(t.baseId, cols)}`).join(' + ')}</span>
-                            <button className="btn-edit-pct" title="Editar porcentaje" aria-label="Editar porcentaje" onClick={e => { e.stopPropagation(); setEditingDistId(item.id) }}>
+                            <button data-ayuda="ing-editar-pct" className="btn-edit-pct" title="Editar porcentaje" aria-label="Editar porcentaje" onClick={e => { e.stopPropagation(); setEditingDistId(item.id) }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                             </button>
                           </div>
@@ -1048,7 +1052,7 @@ export default function RegistrarIngreso() {
 
         {/* Acciones */}
         <div className="actions-row">
-          <div className="icon-group">
+          <div data-ayuda="ing-imprimir" className="icon-group">
             <button onClick={generarPDF} title="Imprimir comprobante" aria-label="Imprimir comprobante">
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             </button>
@@ -1057,7 +1061,7 @@ export default function RegistrarIngreso() {
             </button>
           </div>
           {tab === 'distribucion' && (
-            <button className="btn btn-primary" onClick={guardar} disabled={saving || saved}>
+            <button data-ayuda="ing-guardar" className="btn btn-primary" onClick={guardar} disabled={saving || saved}>
               {saving ? 'Guardando...' : saved ? '✓ Guardado' : 'Guardar registro'}
             </button>
           )}
@@ -1066,7 +1070,7 @@ export default function RegistrarIngreso() {
 
         {/* Resumen del registro (solo lectura) */}
         <aside className="fm-side">
-          <section className="card">
+          <section data-ayuda="ing-total" className="card">
             <div className="card-title" style={{padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>Total del registro</div>
             <div className="fm-side-body">
               <div className="fm-total">${fmt(general)}</div>
@@ -1086,7 +1090,7 @@ export default function RegistrarIngreso() {
               ))}
               <div className="fm-line sep"><span>Total sin V.A.</span><b>${fmt(basesResumen.sinVA || 0)}</b></div>
               {tab === 'tabla' && (
-                <button type="button" className="btn btn-primary" style={{width:'100%',height:38,marginTop:4}} onClick={() => setTab('distribucion')}>
+                <button data-ayuda="ing-ir-distribucion" type="button" className="btn btn-primary" style={{width:'100%',height:38,marginTop:4}} onClick={() => setTab('distribucion')}>
                   Revisar distribución y guardar →
                 </button>
               )}

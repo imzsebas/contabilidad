@@ -3,11 +3,12 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { BASE_V3 } from '@/lib/estilosV3'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verificarClave } from '@/lib/clave'
+import { verificarClaveDetalle, mensajeClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
 import { traerPorIds, traerTodo } from '@/lib/db'
 import { textosIglesia } from '@/lib/configuracion'
 import NombreIglesia from '@/components/NombreIglesia'
+import { msgError, type Celda, type FilaExcel, type Horizontal, type IncomeColumn, type IncomeRecord, type IncomeRow, type IncomeValue, type Member as MemberDB, type ValorCelda } from '@/lib/tipos'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -182,15 +183,15 @@ export default function EstadoIngresosPage() {
 
   useEffect(() => {
     traerTodo(() => supabase.from('members').select('id, nombre, cedula').order('nombre'))
-      .then((data: any) => setMembers(data))
-      .catch((e: any) => setError('Error cargando miembros: ' + (e.message || e)))
+      .then((data) => setMembers(data))
+      .catch((e) => setError('Error cargando miembros: ' + (e.message || e)))
   }, [])
 
   // ── Cargar años disponibles ─────────────────────────────────────────────
   useEffect(() => {
-    traerTodo(() => supabase.from('income_records').select('id, fecha').order('fecha')).then((data: any) => {
+    traerTodo(() => supabase.from('income_records').select('id, fecha').order('fecha')).then((data) => {
       if (!data) return
-      const set  = new Set(data.map((r: any) => r.fecha.slice(0, 4)))
+      const set  = new Set(data.map((r) => r.fecha.slice(0, 4)))
       const list = Array.from(set).sort() as string[]
       setAños(list)
       if (list.length) {
@@ -198,8 +199,8 @@ export default function EstadoIngresosPage() {
         // Mes más reciente del último año
         const lastYear = list[list.length - 1]
         const mesesDelAño = data
-          .filter((r: any) => r.fecha.startsWith(lastYear))
-          .map((r: any) => r.fecha.slice(5, 7))
+          .filter((r) => r.fecha.startsWith(lastYear))
+          .map((r) => r.fecha.slice(5, 7))
         const lastMes = mesesDelAño.sort().pop()
         if (lastMes) setMesSel(lastMes)
       }
@@ -225,43 +226,43 @@ export default function EstadoIngresosPage() {
       if (e1) throw e1
       if (!records?.length) { setGrupos([]); return }
 
-      const recIds = records.map((r: any) => r.id)
+      const recIds = records.map((r) => r.id)
 
       // 2. Columnas, rows, valores en paralelo
       const [cols, rows] = await Promise.all([
-        traerPorIds('income_columns', 'id, record_id, nombre, orden', 'record_id', recIds, q => q.order('orden')),
-        traerPorIds('income_rows', 'id, record_id, orden, member_id', 'record_id', recIds, q => q.order('orden')),
+        traerPorIds<IncomeColumn>('income_columns', 'id, record_id, nombre, orden', 'record_id', recIds, q => q.order('orden')),
+        traerPorIds<IncomeRow>('income_rows', 'id, record_id, orden, member_id', 'record_id', recIds, q => q.order('orden')),
       ])
 
-      const rowIds = (rows || []).map((r: any) => r.id)
-      const vals = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', rowIds)
+      const rowIds = (rows || []).map((r) => r.id)
+      const vals = await traerPorIds<IncomeValue>('income_values', 'id, row_id, column_id, monto', 'row_id', rowIds)
 
       // 3. Miembros
-      const memberIds = [...new Set((rows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))] as number[]
-      const members = await traerPorIds('members', 'id, nombre, cedula', 'id', memberIds)
+      const memberIds = [...new Set((rows || []).filter((r) => r.member_id).map((r) => r.member_id))] as number[]
+      const members = await traerPorIds<MemberDB>('members', 'id, nombre, cedula', 'id', memberIds)
 
       // Maps auxiliares
       const memberMap: Record<number, { nombre: string; cedula: string }> = {}
-      ;(members || []).forEach((m: any) => { memberMap[m.id] = { nombre: m.nombre, cedula: m.cedula } })
+      ;(members || []).forEach((m) => { memberMap[m.id] = { nombre: m.nombre, cedula: m.cedula ?? "" } })
 
       const colMap: Record<number, string> = {}
-      ;(cols || []).forEach((c: any) => { colMap[c.id] = c.nombre })
+      ;(cols || []).forEach((c) => { colMap[c.id] = c.nombre })
 
       const columnasMap: Record<number, { id: number; nombre: string }[]> = {}
-      ;(cols || []).forEach((c: any) => {
+      ;(cols || []).forEach((c) => {
         if (!columnasMap[c.record_id]) columnasMap[c.record_id] = []
         columnasMap[c.record_id].push({ id: c.id, nombre: c.nombre })
       })
       setColumnasPorRegistro(columnasMap)
 
       const valsByRow: Record<number, { column_id: number; monto: number }[]> = {}
-      ;(vals || []).forEach((v: any) => {
+      ;(vals || []).forEach((v) => {
         if (!valsByRow[v.row_id]) valsByRow[v.row_id] = []
         valsByRow[v.row_id].push({ column_id: v.column_id, monto: v.monto })
       })
 
-      const rowsByRecord: Record<number, any[]> = {}
-      ;(rows || []).forEach((r: any) => {
+      const rowsByRecord: Record<number, IncomeRow[]> = {}
+      ;(rows || []).forEach((r) => {
         if (!rowsByRecord[r.record_id]) rowsByRecord[r.record_id] = []
         rowsByRecord[r.record_id].push(r)
       })
@@ -282,7 +283,7 @@ export default function EstadoIngresosPage() {
         })
 
         // Filas individuales — una por cada valor > 0
-        const recRows = (rowsByRecord[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
+        const recRows = (rowsByRecord[rec.id] || []).sort((a, b) => a.orden - b.orden)
         for (const row of recRows) {
           const member  = row.member_id ? memberMap[row.member_id] : null
           const rowVals = valsByRow[row.id] || []
@@ -304,8 +305,8 @@ export default function EstadoIngresosPage() {
       }
 
       setGrupos(Object.values(porFecha).sort((a, b) => a.fecha.localeCompare(b.fecha)))
-    } catch (e: any) {
-      setError(e.message || 'Error cargando datos')
+    } catch (e) {
+      setError(msgError(e) || 'Error cargando datos')
     } finally {
       setLoading(false)
     }
@@ -325,7 +326,8 @@ export default function EstadoIngresosPage() {
 
   async function confirmarPassword() {
     setPassError('Verificando...')
-    if (!(await verificarClave('edicion', passInput))) { setPassError('Contraseña incorrecta.'); return }
+    const estadoClave = await verificarClaveDetalle('edicion', passInput)
+    if (estadoClave !== 'ok') { setPassError(mensajeClave(estadoClave)); return }
     setModoEdicion(true)
     setShowPassModal(false)
     setPassInput(''); setPassError('')
@@ -376,8 +378,8 @@ export default function EstadoIngresosPage() {
           return x
         })
       })))
-    } catch (e: any) {
-      setErrorFila('Error al actualizar valor: ' + (e.message || e))
+    } catch (e) {
+      setErrorFila('Error al actualizar valor: ' + msgError(e))
     } finally {
       setGuardandoRowId(null)
     }
@@ -455,8 +457,8 @@ export default function EstadoIngresosPage() {
       )
       setSeleccionados(new Set())
       setShowConfirmEliminar(false)
-    } catch (e: any) {
-      setErrorFila('Error al eliminar: ' + (e.message || e))
+    } catch (e) {
+      setErrorFila('Error al eliminar: ' + msgError(e))
     } finally {
       setEliminando(false)
     }
@@ -523,8 +525,8 @@ export default function EstadoIngresosPage() {
         }
       }))
       setShowAgregarModal(false)
-    } catch (e: any) {
-      setAgregarError('Error al agregar: ' + (e.message || e))
+    } catch (e) {
+      setAgregarError('Error al agregar: ' + msgError(e))
     } finally {
       setAgregando(false)
     }
@@ -538,22 +540,22 @@ export default function EstadoIngresosPage() {
 
     const VERDE = 'FF006400'; const LINEA = 'FFB0B0B0'
 
-    function titulo(cell: any, val: string) {
+    function titulo(cell: Celda, val: string) {
       cell.value = val
       cell.font  = { bold: true, color: { argb: VERDE }, size: 11, name: 'Arial' }
       cell.alignment = { horizontal: 'center', vertical: 'middle' }
     }
-    function cabecera(cell: any, val: string) {
+    function cabecera(cell: Celda, val: string) {
       cell.value = val
       cell.font  = { bold: true, color: { argb: VERDE }, size: 10, name: 'Arial' }
       cell.alignment = { horizontal: 'center', vertical: 'middle' }
     }
-    function dato(cell: any, val: any, align = 'left', bold = false, color = '00000000') {
+    function dato(cell: Celda, val: ValorCelda, align: Horizontal = 'left', bold = false, color = '00000000') {
       cell.value = val
       cell.font  = { size: 9, name: 'Arial', bold, color: { argb: color } }
       cell.alignment = { horizontal: align, vertical: 'middle' }
     }
-    function divisor(row: any) {
+    function divisor(row: FilaExcel) {
       for (let c = 1; c <= 11; c++) {
         row.getCell(c).value = '----'
         row.getCell(c).font  = { size: 8, color: { argb: LINEA }, name: 'Arial' }
@@ -571,35 +573,35 @@ export default function EstadoIngresosPage() {
 
     if (!allRecords?.length) return
 
-    const allRecIds = allRecords.map((r: any) => r.id)
+    const allRecIds = allRecords.map((r) => r.id)
     const [allCols, allRows] = await Promise.all([
-      traerPorIds('income_columns', 'id, record_id, nombre, orden', 'record_id', allRecIds, q => q.order('orden')),
-      traerPorIds('income_rows', 'id, record_id, orden, member_id', 'record_id', allRecIds, q => q.order('orden')),
+      traerPorIds<IncomeColumn>('income_columns', 'id, record_id, nombre, orden', 'record_id', allRecIds, q => q.order('orden')),
+      traerPorIds<IncomeRow>('income_rows', 'id, record_id, orden, member_id', 'record_id', allRecIds, q => q.order('orden')),
     ])
 
-    const allRowIds = (allRows || []).map((r: any) => r.id)
-    const allVals = await traerPorIds('income_values', 'id, row_id, column_id, monto', 'row_id', allRowIds)
+    const allRowIds = (allRows || []).map((r) => r.id)
+    const allVals = await traerPorIds<IncomeValue>('income_values', 'id, row_id, column_id, monto', 'row_id', allRowIds)
 
-    const allMemberIds = [...new Set((allRows || []).filter((r: any) => r.member_id).map((r: any) => r.member_id))] as number[]
-    const allMembers = await traerPorIds('members', 'id, nombre, cedula', 'id', allMemberIds)
+    const allMemberIds = [...new Set((allRows || []).filter((r) => r.member_id).map((r) => r.member_id))] as number[]
+    const allMembers = await traerPorIds<MemberDB>('members', 'id, nombre, cedula', 'id', allMemberIds)
 
     const mMap: Record<number, { nombre: string; cedula: string }> = {}
-    ;(allMembers || []).forEach((m: any) => { mMap[m.id] = { nombre: m.nombre, cedula: m.cedula } })
+    ;(allMembers || []).forEach((m) => { mMap[m.id] = { nombre: m.nombre, cedula: m.cedula ?? "" } })
     const cMap: Record<number, string> = {}
-    ;(allCols || []).forEach((c: any) => { cMap[c.id] = c.nombre })
+    ;(allCols || []).forEach((c) => { cMap[c.id] = c.nombre })
     const vByRow: Record<number, { column_id: number; monto: number }[]> = {}
-    ;(allVals || []).forEach((v: any) => {
+    ;(allVals || []).forEach((v) => {
       if (!vByRow[v.row_id]) vByRow[v.row_id] = []
       vByRow[v.row_id].push({ column_id: v.column_id, monto: v.monto })
     })
-    const rByRecord: Record<number, any[]> = {}
-    ;(allRows || []).forEach((r: any) => {
+    const rByRecord: Record<number, IncomeRow[]> = {}
+    ;(allRows || []).forEach((r) => {
       if (!rByRecord[r.record_id]) rByRecord[r.record_id] = []
       rByRecord[r.record_id].push(r)
     })
 
     // Agrupar registros por mes
-    const porMes: Record<string, any[]> = {}
+    const porMes: Record<string, IncomeRecord[]> = {}
     for (const rec of allRecords) {
       const mes = rec.fecha.slice(5, 7)
       if (!porMes[mes]) porMes[mes] = []
@@ -640,7 +642,7 @@ export default function EstadoIngresosPage() {
           descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
           recordId: rec.id, columnId: null,
         })
-        const recRows = (rByRecord[rec.id] || []).sort((a: any, b: any) => a.orden - b.orden)
+        const recRows = (rByRecord[rec.id] || []).sort((a, b) => a.orden - b.orden)
         for (const row of recRows) {
           const member  = row.member_id ? mMap[row.member_id] : null
           const rowVals = vByRow[row.id] || []
@@ -736,7 +738,7 @@ export default function EstadoIngresosPage() {
 
         {/* Pestañas años */}
         {años.length > 0 && (
-          <div className="tabs-años">
+          <div data-ayuda="ei-anios" className="tabs-años">
             {años.map(a => (
               <button key={a} className={`tab-año ${a === añoSel ? 'active' : ''}`} onClick={() => setAñoSel(a)}>{a}</button>
             ))}
@@ -744,7 +746,7 @@ export default function EstadoIngresosPage() {
         )}
 
         {/* Pestañas meses */}
-        <div className="tabs-meses-wrap">
+        <div data-ayuda="ei-meses" className="tabs-meses-wrap">
           {MESES.map((m, i) => (
             <button key={m} className={`tab-mes ${m === mesSel ? 'active' : ''}`} onClick={() => setMesSel(m)}>
               {MESES_TAB[i]}
@@ -773,11 +775,11 @@ export default function EstadoIngresosPage() {
                   Cancelar selección
                 </button>
               )}
-              <button className={`btn-modificar ${modoEdicion ? 'active' : ''}`} onClick={abrirModificar} disabled={loading || grupos.length === 0}>
+              <button data-ayuda="ei-modificar" className={`btn-modificar ${modoEdicion ? 'active' : ''}`} onClick={abrirModificar} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
                 {modoEdicion ? 'Finalizar modificación' : 'Modificar'}
               </button>
-              <button className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
+              <button data-ayuda="ei-excel" className="btn-excel" onClick={exportarExcel} disabled={loading || grupos.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
                 Exportar Excel
               </button>
@@ -799,7 +801,7 @@ export default function EstadoIngresosPage() {
           ) : (
             <>
             {ingresoActual && (
-              <div className="pag-bar">
+              <div data-ayuda="ei-paginas" className="pag-bar">
                 <div className="pag-info">
                   <button type="button" className="pag-arrow" aria-label="Ingreso anterior" disabled={paginaActual === 0} onClick={() => setPaginaIngreso(paginaActual - 1)}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m15 6-6 6 6 6"/></svg>
@@ -818,7 +820,7 @@ export default function EstadoIngresosPage() {
                 </div>
               </div>
             )}
-            <div className="table-wrap">
+            <div data-ayuda="ei-tabla" className="table-wrap">
               <table>
                 <thead>
                   <tr>

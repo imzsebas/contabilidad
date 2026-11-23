@@ -126,7 +126,7 @@ export default function InformeEgresos() {
         const ids = records.map(r => r.id)
         const accs = await traerPorIds('expense_accounts', 'id, record_id, codigo, cuenta, debito, credito, orden', 'record_id', ids, q => q.order('orden'))
         const accsMap: Record<number, CuentaPUC[]> = {}
-        ;(accs || []).forEach((a: any) => {
+        ;(accs || []).forEach((a) => {
           if (!accsMap[a.record_id]) accsMap[a.record_id] = []
           accsMap[a.record_id].push({ codigo: a.codigo, cuenta: a.cuenta, debito: a.debito, credito: a.credito })
         })
@@ -511,7 +511,7 @@ export default function InformeEgresos() {
           </div>
         </div>
         {buscado && egresos.length > 0 && (
-          <div className="actions-bar">
+          <div data-ayuda="inf-exportar" className="actions-bar">
             <button className="btn btn-pdf" onClick={exportarPDF}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               PDF
@@ -526,7 +526,7 @@ export default function InformeEgresos() {
 
       <div className="content">
         {/* Filtros */}
-        <div className="card">
+        <div className="card" data-ayuda="inf-filtro">
           <div className="card-title">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filtrar registros
@@ -559,7 +559,7 @@ export default function InformeEgresos() {
                 <input type="date" className="input" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}/>
               </div>
             </>}
-            <div className="field">
+            <div className="field" data-ayuda="inf-tipo">
               <span className="label">Tipo de egreso</span>
               <select className="input" value={tipoFiltro} onChange={e => setTipoFiltro(e.target.value)}>
                 <option value="todos">Todos los tipos</option>
@@ -568,7 +568,7 @@ export default function InformeEgresos() {
                 ))}
               </select>
             </div>
-            <button className="btn-buscar" onClick={cargar} disabled={loading}>
+            <button data-ayuda="inf-buscar" className="btn-buscar" onClick={cargar} disabled={loading}>
               {loading
                 ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{animation:'spin .7s linear infinite'}}><path d="M21 12a9 9 0 1 1-18 0"/></svg>Cargando...</>
                 : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Generar informe</>
@@ -623,7 +623,7 @@ export default function InformeEgresos() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
               Detalle de egresos — {egresos.length} {egresos.length === 1 ? 'registro' : 'registros'}
             </div>
-            <div className="table-wrap">
+            <div data-ayuda="inf-tabla" className="table-wrap">
               <table>
                 <thead>
                   <tr>

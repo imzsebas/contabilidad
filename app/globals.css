@@ -178,8 +178,9 @@ html[data-tema="oscuro"] .logo-app-oscuro { display: block !important; }
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Letra del sistema, igual que GitHub (ya no se descarga Geist de Google) */
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
 }
 
 body {

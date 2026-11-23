@@ -54,11 +54,53 @@ Los scripts de esta parte se entregan **aparte** (no forman parte del código):
 Las instrucciones están dentro de cada archivo. El código de la app ya está listo
 para funcionar antes y después de aplicarlos.
 
+## Correcciones del 23 de noviembre de 2026
+
+Ninguna de estas correcciones borra datos.
+
+| Qué se corrigió | Dónde |
+|---|---|
+| Ya no hay claves de edición/saldo de respaldo escritas en el código (estaban a la vista en GitHub). Si no hay clave en Configuración ni en Vercel, la app avisa que falta crearla | `app/api/verificar-clave`, `lib/clave.ts` |
+| La primera vez, un tesorero puede crear la clave en Configuración → Usuarios y seguridad, dejando "Clave actual" vacía | `lib/clave.ts`, `components/config/Secciones.tsx` |
+| Si al guardar un egreso fallaban las cuentas, se podía volver a guardar y se creaba otro comprobante. Ahora el segundo intento solo guarda las cuentas que faltaban | `egresos/registrar/[tipo]` |
+| Si el número de comprobante ya está ocupado, la app avisa y propone el siguiente (antes lo cambiaba sin decir nada). La base de datos rechaza números repetidos aunque dos personas guarden al tiempo | `egresos/registrar/[tipo]` + migración `06` |
+| Al editar el valor de una cuenta en Estado de Egresos, el "valor" y el "valor en letras" del comprobante se actualizan solos (valor pagado = créditos de caja/bancos 11xx) | `estados/egresos`, `lib/letras.ts` |
+| Se quitó el inicio de sesión anterior con la tabla `users`, que ya no funcionaba | `lib/auth.ts` |
+| Ya no se descargan las fuentes Geist de Google (la app usa la letra del sistema, igual que GitHub) | `app/layout.tsx`, `app/globals.css` |
+| Se quitaron copias viejas que no se usaban: `Registar egreso.tsx` y `[tipo]/tipo egreso.tsx` | — |
+| Tipos reales de las tablas en lugar de `any`; `npm run lint` queda sin errores | `lib/tipos.ts` y varias páginas |
+
+**Base de datos (ya aplicado en Supabase):** migración `06_numero_unico_y_permisos_funciones`.
+El script se entrega aparte, como los anteriores.
+- Un control (trigger) que no deja guardar un egreso con un número ya usado. El 2632 repetido que ya existía se deja igual.
+- Las funciones `verificar_clave`, `guardar_clave`, `es_tesorero` y `mi_rol` ya no se pueden usar sin iniciar sesión. `ping` sigue abierta porque la usa el GitHub Action.
+
+## Botón de Ayuda (noviembre 2026)
+
+En el menú hay una sección nueva **Apoyo → Ayuda**. Al tocarla se abre un modal con las
+preguntas de la página donde está la persona (y unas generales). Al elegir una, empieza
+una guía paso a paso: la página se oscurece, se ilumina el botón o campo del que se habla
+y una tarjeta con flecha explica qué hacer, con «Anterior / Siguiente».
+
+- **Todo el contenido está en `lib/ayuda.ts`.** Para agregar o corregir una pregunta solo
+  se edita ese archivo (las instrucciones están al inicio).
+- Los elementos de cada página tienen una marca invisible `data-ayuda="..."` que no cambia
+  cómo se ven ni cómo funcionan.
+- Tipos de paso: `mirar` (solo se mira), `libre` (se puede escribir o tocar lo resaltado) y
+  `tocar` (la guía espera a que se toque y avanza sola). Si se toca y la página no avanza
+  (por ejemplo, faltaba un dato), la guía vuelve al paso anterior y avisa.
+- Si un elemento no está en pantalla, el paso sale en el centro: la guía nunca se rompe.
+- Las preguntas de registrar o editar no le salen al rol «Consulta».
+- Teclado: ← → para moverse, Esc para salir.
+- No lee ni guarda nada en la base de datos. Solo recuerda en el navegador qué guías ya
+  se vieron (salen con ✓).
+- El componente está en `components/ayuda/Ayuda.tsx`.
+
 ## Pendientes que requieren decisión
 
-- **Retención en la fuente del arriendo:** en 4 comprobantes (No. 2602, 2607, 2611, 2659)
-  la RTE FTE 2365-30 quedó en débito, por eso no cuadran. La app ahora avisa, pero
-  los registros existentes no se cambiaron.
+- **Botones que borran datos:** "Eliminar seleccionados" en Estado de Ingresos y "Eliminar"
+  en Miembros todavía borran de verdad. Falta decidir si se quitan o se cambian por "desactivar".
 - **Valor del egreso en el libro auxiliar:** se usa el débito de la primera cuenta
   (gasto bruto). En 6 comprobantes ese valor es distinto al valor pagado en el comprobante.
 - **Comprobante No. 2632 repetido:** existe dos veces en la base de datos. No se tocó.
+- **Protección contra contraseñas filtradas:** se activa en Supabase → Authentication → (configuración de contraseñas).

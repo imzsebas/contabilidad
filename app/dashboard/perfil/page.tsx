@@ -146,7 +146,7 @@ export default function PerfilPage() {
 
           <div className="pf-col">
             {/* ── Nombre ── */}
-            <section className="card">
+            <section data-ayuda="pf-datos" className="card">
               <div className="card-title"><Ico d={ICO.user} />Datos personales</div>
               <form className="pf-body" onSubmit={e => {
                 e.preventDefault()
@@ -177,7 +177,7 @@ export default function PerfilPage() {
             </section>
 
             {/* ── Contraseña ── */}
-            <section className="card">
+            <section className="card" data-ayuda="pf-clave">
               <div className="card-title"><Ico d={ICO.lock} />Cambiar contraseña</div>
               <form className="pf-body" onSubmit={e => {
                 e.preventDefault()

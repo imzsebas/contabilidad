@@ -79,7 +79,7 @@ export default function EstadosFinancierosPage() {
       {/* Contenido */}
       <div className="content">
         <div className="section-label">Selecciona una sección</div>
-        <div className="cards">
+        <div data-ayuda="ev-tarjetas" className="cards">
           {secciones.map((s, i) => (
             <div
               key={i}

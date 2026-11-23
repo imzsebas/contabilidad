@@ -29,7 +29,7 @@ export default function RegistrarEgreso() {
 
       <div className="content">
         <div className="eg-wrap">
-          <section className="eg-grid">
+          <section data-ayuda="eg-tipos" className="eg-grid">
             {TIPOS.map(t => (
               <button key={t.id} type="button" className="eg-card" onClick={() => router.push(`/dashboard/egresos/registrar/${t.id}`)}>
                 <span className="eg-ico">

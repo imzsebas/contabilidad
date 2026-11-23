@@ -3,11 +3,12 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo, valoresEgresos, saldoAntesDe, saldoInicialDelAnio, tablaSaldosDisponible } from '@/lib/db'
-import { verificarClave } from '@/lib/clave'
+import { verificarClaveDetalle, mensajeClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
 import { BASE_V3 } from '@/lib/estilosV3'
 import { textosIglesia } from '@/lib/configuracion'
 import NombreIglesia from '@/components/NombreIglesia'
+import { msgError, type ExpenseRecord, type Horizontal, type IncomeRecord } from '@/lib/tipos'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaAuxiliar {
@@ -68,7 +69,8 @@ export default function LibroAuxiliarPage() {
     setModalError('')
     setGuardandoSaldo(true)
     try {
-      if (!(await verificarClave('saldo', modalPass))) { setModalError('Contraseña incorrecta'); return }
+      const estadoClave = await verificarClaveDetalle('saldo', modalPass)
+      if (estadoClave !== 'ok') { setModalError(mensajeClave(estadoClave)); return }
       if (saldoPersistido) {
         // upsert: crea o actualiza la fila del año. "Quitar" deja el monto en null (no borra nada).
         const { error: e } = await supabase.from('saldos_iniciales')
@@ -90,8 +92,8 @@ export default function LibroAuxiliarPage() {
     ]).then(([eData, iData]) => {
       const e = { data: eData }, i = { data: iData }
       const set = new Set<string>()
-      ;(e.data || []).forEach((r: any) => set.add(r.fecha.slice(0, 4)))
-      ;(i.data || []).forEach((r: any) => set.add(r.fecha.slice(0, 4)))
+      ;(e.data || []).forEach((r) => set.add(r.fecha.slice(0, 4)))
+      ;(i.data || []).forEach((r) => set.add(r.fecha.slice(0, 4)))
       const list = Array.from(set).sort() as string[]
       setAños(list)
       if (list.length) {
@@ -99,8 +101,8 @@ export default function LibroAuxiliarPage() {
         setAñoSel(lastYear)
         // Preseleccionar último mes con datos
         const allFechas = [
-          ...(e.data || []).map((r: any) => r.fecha),
-          ...(i.data || []).map((r: any) => r.fecha),
+          ...(e.data || []).map((r) => r.fecha),
+          ...(i.data || []).map((r) => r.fecha),
         ].filter((f: string) => f.startsWith(lastYear))
         const lastMes = allFechas.map((f: string) => f.slice(5, 7)).sort().pop()
         if (lastMes) setMesSel(lastMes)
@@ -119,7 +121,7 @@ export default function LibroAuxiliarPage() {
       const hasta     = `${añoSel}-${mesSel}-${String(ultimoDia).padStart(2, '0')}`
 
       // 1. Egresos del mes — valor = débito principal (orden 0) o, si no hay, el valor
-      const expRecords: any[] = await traerTodo(() => supabase
+      const expRecords = await traerTodo<ExpenseRecord>(() => supabase
         .from('expense_records')
         .select('id, fecha, concepto, valor, numero')
         .gte('fecha', desde).lte('fecha', hasta)
@@ -127,7 +129,7 @@ export default function LibroAuxiliarPage() {
       const debitosPorRecord = await valoresEgresos(expRecords)
 
       // 2. Ingresos del mes
-      const incRecords: any[] = await traerTodo(() => supabase
+      const incRecords = await traerTodo<IncomeRecord>(() => supabase
         .from('income_records')
         .select('id, fecha, total')
         .gte('fecha', desde).lte('fecha', hasta)
@@ -137,7 +139,7 @@ export default function LibroAuxiliarPage() {
       type Movimiento = { fecha: string; esIngreso: boolean; valor: number; descripcion: string }
       const movimientos: Movimiento[] = []
 
-      ;(expRecords || []).forEach((r: any) => {
+      ;(expRecords || []).forEach((r) => {
         const valor = debitosPorRecord[r.id] ?? r.valor ?? 0
         if (valor > 0) {
           movimientos.push({
@@ -149,7 +151,7 @@ export default function LibroAuxiliarPage() {
         }
       })
 
-      ;(incRecords || []).forEach((r: any) => {
+      ;(incRecords || []).forEach((r) => {
         if ((r.total ?? 0) > 0) {
           movimientos.push({
             fecha:       r.fecha,
@@ -209,8 +211,8 @@ export default function LibroAuxiliarPage() {
       })
 
       setFilas(filasResult)
-    } catch (e: any) {
-      setError(e.message || 'Error cargando datos')
+    } catch (e) {
+      setError(msgError(e) || 'Error cargando datos')
     } finally {
       setLoading(false)
     }
@@ -227,7 +229,6 @@ export default function LibroAuxiliarPage() {
     const AZUL  = 'FF1A3A8F'
     const VERDE = 'FF1A7A4A'
     const ROJO  = 'FFC0392B'
-    const GRIS  = 'FFF8FAFF'
 
     for (const mes of MESES) {
       const mesNum    = parseInt(mes)
@@ -235,19 +236,19 @@ export default function LibroAuxiliarPage() {
       const desde     = `${añoSel}-${mes}-01`
       const hasta     = `${añoSel}-${mes}-${String(ultimoDia).padStart(2, '0')}`
 
-      const [expR, incR]: any[][] = await Promise.all([
-        traerTodo(() => supabase.from('expense_records').select('id, fecha, concepto, valor, numero').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero')),
-        traerTodo(() => supabase.from('income_records').select('id, fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha')),
+      const [expR, incR] = await Promise.all([
+        traerTodo<ExpenseRecord>(() => supabase.from('expense_records').select('id, fecha, concepto, valor, numero').gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero')),
+        traerTodo<IncomeRecord>(() => supabase.from('income_records').select('id, fecha, total').gte('fecha', desde).lte('fecha', hasta).order('fecha')),
       ])
       const debMap = await valoresEgresos(expR)
 
       type Mov = { fecha: string; esIngreso: boolean; valor: number; descripcion: string }
       const movs: Mov[] = []
-      ;(expR || []).forEach((r: any) => {
+      ;(expR || []).forEach((r) => {
         const v = debMap[r.id] ?? r.valor ?? 0
         if (v > 0) movs.push({ fecha: r.fecha, esIngreso: false, valor: v, descripcion: (r.concepto || '').toUpperCase() })
       })
-      ;(incR || []).forEach((r: any) => {
+      ;(incR || []).forEach((r) => {
         if ((r.total ?? 0) > 0) movs.push({ fecha: r.fecha, esIngreso: true, valor: r.total, descripcion: 'INGRESO DIEZMOS Y OFRENDAS POR SOBRES' })
       })
       movs.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : a.esIngreso ? -1 : 1)
@@ -285,7 +286,7 @@ export default function LibroAuxiliarPage() {
         c.value = h
         c.font  = { bold: true, size: 9, name: 'Arial', color: { argb: 'FFFFFFFF' } }
         c.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: AZUL } }
-        c.alignment = { horizontal: hAligns[i] as any, vertical: 'middle' }
+        c.alignment = { horizontal: hAligns[i] as Horizontal, vertical: 'middle' }
         c.border = { bottom: { style: 'thin', color: { argb: 'FFD8E4F8' } } }
       })
 
@@ -446,7 +447,7 @@ export default function LibroAuxiliarPage() {
 
         {/* Pestañas años */}
         {años.length > 0 && (
-          <div className="tabs-años">
+          <div data-ayuda="ea-anios" className="tabs-años">
             {años.map(a => (
               <button key={a} className={`tab-año ${a === añoSel ? 'active' : ''}`} onClick={() => setAñoSel(a)}>{a}</button>
             ))}
@@ -454,7 +455,7 @@ export default function LibroAuxiliarPage() {
         )}
 
         {/* Pestañas meses */}
-        <div className="tabs-meses-wrap">
+        <div data-ayuda="ea-meses" className="tabs-meses-wrap">
           {MESES.map((m, i) => (
             <button key={m} className={`tab-mes ${m === mesSel ? 'active' : ''}`} onClick={() => setMesSel(m)}>
               {MESES_TAB[i]}
@@ -465,9 +466,9 @@ export default function LibroAuxiliarPage() {
         {/* Resumen del mes */}
         {!loading && filas.length > 0 && (
           <>
-          <div className="v3-kpis">
+          <div data-ayuda="ea-kpis" className="v3-kpis">
             <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Saldo inicial del mes</p><p className="v3-kpi-val">${fmt(saldoInicioMes)}</p></div></div>
-              <button type="button" className="aux-kpi-btn" onClick={abrirSaldo}>
+              <button data-ayuda="ea-saldo" type="button" className="aux-kpi-btn" onClick={abrirSaldo}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>
                 {saldoInicialCustom !== null ? `Saldo inicial del año: $${fmt(saldoInicialCustom)}` : 'Ajustar saldo inicial'}
               </button></div>
@@ -477,7 +478,7 @@ export default function LibroAuxiliarPage() {
           </div>
           <div className="card">
             <div className="card-title" style={{padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>Saldo día a día</div>
-            <div className="aux-chart" role="img" aria-label="Evolución del saldo durante el mes">
+            <div data-ayuda="ea-grafica" className="aux-chart" role="img" aria-label="Evolución del saldo durante el mes">
               {filas.map((f, i) => {
                 const llenas = Math.round((Math.max(0, f.saldo) / maxSaldo) * 10)
                 return (
@@ -509,7 +510,7 @@ export default function LibroAuxiliarPage() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                 {saldoInicialCustom !== null ? `Saldo inicial: $${fmt(saldoInicialCustom)}` : 'Ajustar saldo inicial'}
               </button>
-              <button className="btn-excel" onClick={exportarExcel} disabled={loading || filas.length === 0}>
+              <button data-ayuda="ea-excel" className="btn-excel" onClick={exportarExcel} disabled={loading || filas.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
                 Exportar Excel
               </button>
@@ -576,7 +577,7 @@ export default function LibroAuxiliarPage() {
           ) : filas.length === 0 ? (
             <div className="empty">No hay movimientos para {MESES_NOM[mesSel]} {añoSel}</div>
           ) : (
-            <div className="table-wrap">
+            <div data-ayuda="ea-tabla" className="table-wrap">
               <table>
                 <thead>
                   <tr>

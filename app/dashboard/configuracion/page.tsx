@@ -70,16 +70,16 @@ function ConfiguracionPage() {
               </div>
             )}
             <div className="cf-wrap">
-              <nav className="cf-nav" aria-label="Secciones de configuración">
+              <nav className="cf-nav" aria-label="Secciones de configuración" data-ayuda="cf-nav">
                 {SECCIONES.map((s, i) => (
-                  <button key={s.id} type="button" className={'cf-nav-item' + (sec === s.id ? ' on' : '')} onClick={() => ir(s.id)}>
+                  <button key={s.id} data-ayuda={`cf-${s.id}`} type="button" className={'cf-nav-item' + (sec === s.id ? ' on' : '')} onClick={() => ir(s.id)}>
                     <span className="cf-nav-n">{i + 1}</span>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={s.d} /></svg>
                     <span className="cf-nav-txt"><b>{s.titulo}</b><small>{s.desc}</small></span>
                   </button>
                 ))}
               </nav>
-              <section className="cf-panel">
+              <section className="cf-panel" data-ayuda="cf-contenido">
                 <div className="cf-head">
                   <h2>{actual.titulo}</h2>
                   <p>{actual.desc}</p>

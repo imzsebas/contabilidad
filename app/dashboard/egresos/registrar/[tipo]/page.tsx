@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { BASE_V3 } from '@/lib/estilosV3'
+import { numeroALetras } from '@/lib/letras'
 import { CLAVE_PREFILL, type Prefill } from '@/components/SubirComprobantes'
 import { useConfig, cargarConfig, config as leerConfig, textosIglesia, calcularRetencion, TIPOS_DEFAULT, type TipoEgreso } from '@/lib/configuracion'
 import { ListaPUC } from '@/components/config/Secciones'
@@ -10,37 +11,6 @@ import { type ArchivoSoporte, tomarPendientes, prepararArchivo, esArchivoValido,
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
-
-function numeroALetras(num: number): string {
-  const unidades = ['','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE']
-  const decenas  = ['','','VEINTE','TREINTA','CUARENTA','CINCUENTA','SESENTA','SETENTA','OCHENTA','NOVENTA']
-  const especiales = ['DIEZ','ONCE','DOCE','TRECE','CATORCE','QUINCE','DIECISÉIS','DIECISIETE','DIECIOCHO','DIECINUEVE']
-  const centenas = ['','CIENTO','DOSCIENTOS','TRESCIENTOS','CUATROCIENTOS','QUINIENTOS','SEISCIENTOS','SETECIENTOS','OCHOCIENTOS','NOVECIENTOS']
-  if (num === 0) return 'CERO PESOS M/CTE'
-  function grupo(n: number): string {
-    if (n === 0) return ''
-    if (n < 10) return unidades[n]
-    if (n < 20) return especiales[n - 10]
-    if (n < 100) {
-      const d = Math.floor(n/10), u = n%10
-      if (u === 0) return decenas[d]
-      if (d === 2) return 'VEINTI' + unidades[u]
-      return decenas[d] + ' Y ' + unidades[u]
-    }
-    const c = Math.floor(n/100), r = n%100
-    if (n === 100) return 'CIEN'
-    return centenas[c] + (r > 0 ? ' ' + grupo(r) : '')
-  }
-  const e = Math.floor(num)
-  let res = ''
-  const M = Math.floor(e/1000000)
-  if (M > 0) res += (M === 1 ? 'UN MILLÓN ' : grupo(M) + ' MILLONES ')
-  const K = Math.floor((e%1000000)/1000)
-  if (K > 0) res += (K === 1 ? 'MIL ' : grupo(K) + ' MIL ')
-  const U = e%1000
-  if (U > 0) res += grupo(U)
-  return (res.trim() + ' PESOS M/CTE').trim()
-}
 
 // ── Datos prellenados por tipo ─────────────────────────────────────────────
 interface Cuenta { codigo: string; cuenta: string; debito: number; credito: number }
@@ -119,7 +89,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
 
   const [numero,       setNumero]       = useState('')
   const [fecha,        setFecha]        = useState('')
-  const [ciudad,       setCiudad]       = useState(ig.CIUDAD)
+  const [ciudad]                          = useState(ig.CIUDAD)
   const [pagadoA,      setPagadoA]      = useState(config.pagadoA)
   const [concepto,     setConcepto]     = useState('')
   const [conceptoCustom, setConceptoCustom] = useState('')
@@ -247,55 +217,88 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
     if (!fecha) { setError('La fecha es obligatoria'); return false }
     if (!pagadoA.trim()) { setError('El campo "Pagado a" es obligatorio'); return false }
     if (valorNum === 0) { setError('El valor debe ser mayor a cero'); return false }
-    if (saved) return true   // evita guardar dos veces el mismo comprobante
+    if (saved || saving) return saved   // evita guardar dos veces el mismo comprobante
     setSaving(true); setError('')
+    // Si el comprobante ya quedó creado en un intento anterior (pero fallaron las
+    // cuentas), NO se crea otro: solo se terminan de guardar las cuentas.
+    let idCreado: number | null = recordId
     try {
-      // Verificar que el número no lo haya tomado otra persona mientras se llenaba
-      // el formulario (ya pasó: el No. 2632 quedó repetido).
-      let numeroFinal = parseInt(numero) || null
-      if (numeroFinal !== null) {
-        const { data: existe, error: eNum } = await supabase
-          .from('expense_records').select('id').eq('numero', numeroFinal).limit(1)
-        if (eNum) throw eNum
-        if (existe && existe.length > 0) {
-          const { data: ult, error: eUlt } = await supabase
-            .from('expense_records').select('numero').order('numero', { ascending: false, nullsFirst: false }).limit(1)
-          if (eUlt) throw eUlt
-          numeroFinal = (ult?.[0]?.numero || 0) + 1
-          setNumero(String(numeroFinal))
+      if (idCreado === null) {
+        // Verificar que el número no lo haya tomado otra persona mientras se llenaba
+        // el formulario (ya pasó: el No. 2632 quedó repetido). Si está ocupado, se
+        // propone el siguiente y se AVISA; no se guarda hasta que el usuario confirme.
+        const numeroFinal = parseInt(numero) || null
+        if (numeroFinal !== null) {
+          const { data: existe, error: eNum } = await supabase
+            .from('expense_records').select('id').eq('numero', numeroFinal).limit(1)
+          if (eNum) throw eNum
+          if (existe && existe.length > 0) {
+            await proponerSiguienteNumero(numeroFinal)
+            return false
+          }
+        }
+
+        const { data: rec, error: e1 } = await supabase
+          .from('expense_records')
+          .insert({
+            numero: numeroFinal,
+            fecha, ciudad, pagado_a: pagadoA,
+            concepto: conceptoFinal, valor: valorNum,
+            en_letras: enLetras, efectivo,
+            doc_tipo: docTipo, doc_numero: docNumero,
+            elaborado_por: elaboradoPor, tipo,
+          }).select().single()
+        if (e1) {
+          // La base de datos rechaza números repetidos (por si dos personas guardan al tiempo)
+          if (/NUMERO_REPETIDO/.test(e1.message || '') && numeroFinal !== null) {
+            await proponerSiguienteNumero(numeroFinal)
+            return false
+          }
+          throw e1
+        }
+        idCreado = rec.id
+        setRecordId(rec.id)
+      }
+
+      // Cuentas (solo si ese comprobante todavía no tiene ninguna guardada)
+      const { data: yaTiene, error: eYa } = await supabase
+        .from('expense_accounts').select('id').eq('record_id', idCreado).limit(1)
+      if (eYa) throw eYa
+      if (!yaTiene || yaTiene.length === 0) {
+        const accs = cuentas
+          .filter(c => c.codigo || c.cuenta)
+          .map((c, i) => ({ record_id: idCreado, ...c, orden: i }))
+        if (accs.length > 0) {
+          const { error: e2 } = await supabase.from('expense_accounts').insert(accs)
+          if (e2) throw e2
         }
       }
-
-      const { data: rec, error: e1 } = await supabase
-        .from('expense_records')
-        .insert({
-          numero: numeroFinal,
-          fecha, ciudad, pagado_a: pagadoA,
-          concepto: conceptoFinal, valor: valorNum,
-          en_letras: enLetras, efectivo,
-          doc_tipo: docTipo, doc_numero: docNumero,
-          elaborado_por: elaboradoPor, tipo,
-        }).select().single()
-      if (e1) throw e1
-
-      const accs = cuentas
-        .filter(c => c.codigo || c.cuenta)
-        .map((c, i) => ({ record_id: rec.id, ...c, orden: i }))
-      if (accs.length > 0) {
-        const { error: e2 } = await supabase.from('expense_accounts').insert(accs)
-        if (e2) throw e2
-      }
       setSaved(true)
-      setRecordId(rec.id)
       // El egreso ya quedó guardado; ahora se suben los soportes (si hay)
-      if (soportes.length > 0) await subirPendientes(rec.id, soportes)
+      if (soportes.length > 0 && idCreado !== null) await subirPendientes(idCreado, soportes)
       return true
-    } catch (e: any) {
-      setError('Error al guardar: ' + (e.message || 'Intenta de nuevo'))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message
+      if (idCreado !== null) {
+        setError(`El comprobante No. ${numero} quedó creado, pero sus cuentas no se guardaron (${msg || 'error de conexión'}). ` +
+          'Vuelve a dar "Guardar": solo se guardarán las cuentas, sin crear otro comprobante.')
+      } else {
+        setError('Error al guardar: ' + (msg || 'Intenta de nuevo'))
+      }
       return false
     } finally {
       setSaving(false)
     }
+  }
+
+  // El número ya lo usa otro comprobante: se pone el siguiente libre y se avisa.
+  async function proponerSiguienteNumero(ocupado: number) {
+    const { data: ult } = await supabase
+      .from('expense_records').select('numero').order('numero', { ascending: false, nullsFirst: false }).limit(1)
+    const siguiente = Math.max((ult?.[0]?.numero || 0) + 1, ocupado + 1)
+    setNumero(String(siguiente))
+    setError(`El No. ${ocupado} ya lo usa otro comprobante (alguien lo guardó mientras llenabas este). ` +
+      `Se cambió al No. ${siguiente}. Revísalo y vuelve a dar "Guardar".`)
   }
 
   async function subirPendientes(id: number, lista: ArchivoSoporte[]) {
@@ -502,7 +505,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
           <div className="actions-bar">
             {saved
               ? <span style={{color:'var(--ok)',fontSize:13,fontWeight:600}}>✓ Guardado</span>
-              : <button className="btn btn-save" onClick={() => setShowFinalModal(true)}>
+              : <button data-ayuda="egf-finalizar" className="btn btn-save" onClick={() => setShowFinalModal(true)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
                   Finalizar
                 </button>
@@ -609,6 +612,8 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
             <div className="modal-box" onClick={e => e.stopPropagation()}>
               <div className="modal-title">¿Cómo quieres finalizar?</div>
               <div className="modal-subtitle">Comprobante No. {numero} — {config.label}</div>
+              {/* El aviso se muestra aquí también; detrás del modal no se alcanzaba a ver */}
+              {error && <div className="alert-error" style={{margin:'0 0 12px',fontSize:13}}>{error}</div>}
               <div className="modal-actions">
                 <button className="btn btn-save" onClick={handleGuardarYDescargar} disabled={saving} style={{justifyContent:'center'}}>
                   {saving ? (subiendo ? 'Subiendo soportes...' : 'Guardando...') : <>
@@ -648,7 +653,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
       </div>
 
       {/* Indicador de pasos */}
-      <div className="progress-wrap">
+      <div data-ayuda="egf-pasos" className="progress-wrap">
         <div className="progress-steps">
           {STEP_LABELS.map((label, i) => {
             const n = i + 1
@@ -697,7 +702,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
             </div>
             <div className="field">
               <span className="label">¿Cuándo salió el dinero?</span>
-              <input className="input" type="date" value={fecha} onChange={e => handleFecha(e.target.value)}/>
+              <input data-ayuda="egf-fecha" className="input" type="date" value={fecha} onChange={e => handleFecha(e.target.value)}/>
               {fechaAlerta && (
                 <div className="fecha-alerta">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -710,7 +715,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
 
         {/* Paso 2 — Información del pago */}
         {step === 2 && (
-          <div className="card">
+          <div className="card" data-ayuda="egf-pago">
             <div className="card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
               Información del pago
@@ -768,7 +773,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
 
         {/* Paso 3 — Cuentas P.U.C. */}
         {step === 3 && (
-          <div className="card">
+          <div className="card" data-ayuda="egf-cuentas">
             <div className="card-title" style={{justifyContent:'space-between'}}>
               <span style={{display:'flex',alignItems:'center',gap:8}}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
@@ -823,8 +828,8 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
               const deb = cuentas.reduce((a, x) => a + (x.debito || 0), 0)
               const cre = cuentas.reduce((a, x) => a + (x.credito || 0), 0)
               return deb === cre
-                ? <div className="fm-cuadre ok">✓ Débitos y créditos cuadran: <b>${fmt(deb)}</b></div>
-                : <div className="fm-cuadre no">Débitos <b>${fmt(deb)}</b> · Créditos <b>${fmt(cre)}</b> — aún no cuadran</div>
+                ? <div className="fm-cuadre ok" data-ayuda="egf-cuadre">✓ Débitos y créditos cuadran: <b>${fmt(deb)}</b></div>
+                : <div className="fm-cuadre no" data-ayuda="egf-cuadre">Débitos <b>${fmt(deb)}</b> · Créditos <b>${fmt(cre)}</b> — aún no cuadran</div>
             })()}
             <CalculoRetencion cuentas={cuentas} onAplicar={(nuevas, pagado) => { setAceptoDescuadre(false); setCuentas(nuevas); setValor(fmt(pagado)) }} />
             <ListaPUC />
@@ -833,7 +838,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
 
         {/* Paso 4 — Datos adicionales */}
         {step === 4 && (
-          <div className="card">
+          <div className="card" data-ayuda="egf-adicional">
             <div className="card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
               Datos adicionales
@@ -850,7 +855,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
                 <div className="field">
                   <span className="label">Documento</span>
                   <div style={{display:'flex',gap:8}}>
-                    <select className="input" style={{flex:1}} value={docTipo} onChange={e => setDocTipo(e.target.value as any)}>
+                    <select className="input" style={{flex:1}} value={docTipo} onChange={e => setDocTipo(e.target.value as 'NIT' | 'CC' | '')}>
                       <option value="">—</option>
                       <option value="CC">C.C.</option>
                       <option value="NIT">NIT</option>
@@ -868,7 +873,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
             Atrás
           </button>
-          <button className="btn btn-primary" onClick={siguiente}>
+          <button data-ayuda="egf-siguiente" className="btn btn-primary" onClick={siguiente}>
             {step < TOTAL_STEPS ? 'Siguiente' : 'Ver comprobante'}
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
@@ -892,7 +897,7 @@ function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config:
         </aside>
 
         {/* Soportes adjuntos (opcional) */}
-        <aside className="card" style={{padding:0}}>
+        <aside className="card" style={{padding:0}} data-ayuda="egf-soportes">
           <div className="card-title" style={{margin:0,padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>
             Soportes <span className="sp-tag">OPCIONAL</span>
           </div>
@@ -973,7 +978,7 @@ function CalculoRetencion({ cuentas, onAplicar }: { cuentas: Cuenta[]; onAplicar
   }
 
   return (
-    <div className="rte-box">
+    <div data-ayuda="egf-retencion" className="rte-box">
       <div className="rte-head">
         <b>Retención en la fuente</b>
         <span>{String(r.porcentaje).replace('.', ',')} % · cuenta {r.cuenta}</span>

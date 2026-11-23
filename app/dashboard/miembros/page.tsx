@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { traerTodo } from '@/lib/db'
 import { BASE_V3 } from '@/lib/estilosV3'
 import NombreIglesia from '@/components/NombreIglesia'
+import { msgError } from '@/lib/tipos'
 
 interface Member {
   id: number
@@ -35,25 +36,40 @@ export default function MiembrosPage() {
   const [error, setError]           = useState('')
   const [success, setSuccess]       = useState('')
 
-  const fetchMembers = useCallback(async () => {
-    setLoading(true)
+  // Lee la lista de miembros (solo lectura)
+  async function leerMiembros(): Promise<{ data: Member[] | null; error: string }> {
     try {
-      const data = await traerTodo(() => supabase
+      const data = await traerTodo<Member>(() => supabase
         .from('members')
         .select('*')
         .order('nombre', { ascending: true }))
-      setMembers(data)
-    } catch (e: any) {
-      setError('Error cargando miembros: ' + (e.message || e))
+      return { data, error: '' }
+    } catch (e) {
+      return { data: null, error: 'Error cargando miembros: ' + msgError(e) }
     }
+  }
+
+  const fetchMembers = useCallback(async () => {
+    setLoading(true)
+    const r = await leerMiembros()
+    if (r.data) setMembers(r.data)
+    if (r.error) setError(r.error)
     setLoading(false)
   }, [])
 
+  // Carga inicial (el estado se actualiza cuando llega la respuesta)
   useEffect(() => {
     const stored = sessionStorage.getItem('user')
     if (!stored) { router.push('/login'); return }
-    fetchMembers()
-  }, [router, fetchMembers])
+    let activo = true
+    leerMiembros().then(r => {
+      if (!activo) return
+      if (r.data) setMembers(r.data)
+      if (r.error) setError(r.error)
+      setLoading(false)
+    })
+    return () => { activo = false }
+  }, [router])
 
   const filtered = members.filter(m =>
     (m.nombre.toLowerCase().includes(search.toLowerCase()) ||
@@ -80,19 +96,19 @@ export default function MiembrosPage() {
     setError('')
   }
 
-  useEffect(() => {
-    if (!showForm) return
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeForm() }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [showForm])
-
   function closeForm() {
     setShowForm(false)
     setEditing(null)
     setForm({ ...EMPTY_FORM })
     setError('')
   }
+
+  useEffect(() => {
+    if (!showForm) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeForm() }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [showForm])
 
   async function handleSave() {
     if (!(form.nombre ?? '').trim()) { setError('El nombre es obligatorio.'); return }
@@ -147,7 +163,7 @@ export default function MiembrosPage() {
             <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>
+        <button data-ayuda="mi-agregar" className="btn btn-primary" onClick={openAdd}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
@@ -255,7 +271,7 @@ export default function MiembrosPage() {
 
         {/* Toolbar búsqueda */}
         <div className="toolbar">
-          <div className="search-wrap">
+          <div data-ayuda="mi-buscar" className="search-wrap">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -266,7 +282,7 @@ export default function MiembrosPage() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <div className="v3-seg" role="group" aria-label="Filtrar por estado">
+          <div data-ayuda="mi-filtro" className="v3-seg" role="group" aria-label="Filtrar por estado">
             <button type="button" className={estadoFiltro === 'todos' ? 'on' : ''} onClick={() => setEstadoFiltro('todos')}>Todos</button>
             <button type="button" className={estadoFiltro === 'activos' ? 'on' : ''} onClick={() => setEstadoFiltro('activos')}>Activos</button>
             <button type="button" className={estadoFiltro === 'inactivos' ? 'on' : ''} onClick={() => setEstadoFiltro('inactivos')}>Inactivos</button>
@@ -331,7 +347,7 @@ export default function MiembrosPage() {
                           </div>
                         ) : (
                           <div className="actions-cell">
-                            <button className="btn btn-ghost btn-sm" onClick={() => openEdit(m)}>
+                            <button data-ayuda="mi-editar" className="btn btn-ghost btn-sm" onClick={() => openEdit(m)}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
