@@ -269,11 +269,12 @@ const PAGINAS: Pagina[] = [
         ],
       },
       {
-        id: 'ei-corregir', pregunta: '¿Cómo corrijo un nombre o un valor?', icono: 'lapiz', soloTesorero: true,
+        id: 'ei-corregir', pregunta: '¿Cómo corrijo un nombre, un valor o la fecha?', icono: 'lapiz', soloTesorero: true,
         pasos: [
           { sel: 'ei-modificar', titulo: 'Toca «Modificar»', texto: 'Te va a pedir la clave de modo edición.', accion: 'tocar' },
           { sel: '.modal-card', titulo: 'Escribe la clave', texto: 'Es la clave de modo edición (la crea el tesorero en Configuración). Toca «Confirmar».', accion: 'libre' },
           { sel: 'ei-tabla', titulo: 'Toca lo que quieres cambiar', texto: 'Un nombre para cambiar el miembro, o un valor para corregirlo. Se guarda al presionar Enter.' },
+          { sel: 'ei-fecha', titulo: 'Cambiar la fecha', texto: 'En la fila de la iglesia, toca la fecha y elige el día correcto. Se mueve el ingreso completo, con todos sus sobres. Si cae en otro mes, la página se cambia sola a ese mes.' },
           { sel: '.btn-add-row', titulo: '¿Faltó una ofrenda?', texto: 'En la fila de la iglesia aparece un «+» para agregar una ofrenda o diezmo que se pasó.' },
           { sel: 'ei-modificar', titulo: 'Termina', texto: 'Cuando acabes, toca «Finalizar modificación».' },
         ],

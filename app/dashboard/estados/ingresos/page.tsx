@@ -48,6 +48,42 @@ function scDesdeNombre(nombre: string): number {
 }
 
 // ── Autocomplete inline para reasignar miembro de una fila ──────────────────
+// ── Edición inline: fecha del ingreso (fila de la iglesia) ───────────────
+function EditarFechaInline({
+  valorActual, saving, onSave
+}: { valorActual: string; saving: boolean; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [value,   setValue]   = useState(valorActual)
+
+  function confirmar() {
+    setEditing(false)
+    if (value && value !== valorActual) onSave(value)
+  }
+
+  const texto = valorActual.split('-').reverse().join('/')
+  if (saving) return <span style={{opacity:.5}}>{texto}</span>
+
+  if (!editing) {
+    return (
+      <span className="valor-editable" data-ayuda="ei-fecha" title="Cambiar la fecha de todo este ingreso"
+        onClick={() => { setValue(valorActual); setEditing(true) }}>
+        {texto}
+      </span>
+    )
+  }
+  return (
+    <input
+      type="date"
+      className="edit-fecha-input"
+      value={value}
+      autoFocus
+      onChange={e => setValue(e.target.value)}
+      onBlur={confirmar}
+      onKeyDown={e => { if (e.key === 'Enter') confirmar(); if (e.key === 'Escape') setEditing(false) }}
+    />
+  )
+}
+
 function EditarNombreInput({
   valorActual, members, saving, onSelect
 }: {
@@ -162,6 +198,10 @@ export default function EstadoIngresosPage() {
   const [passError,        setPassError]         = useState('')
   const [guardandoRowId,   setGuardandoRowId]    = useState<number | null>(null)
   const [errorFila,        setErrorFila]         = useState('')
+  // Cambio de fecha de un ingreso completo
+  const [guardandoFecha,   setGuardandoFecha]    = useState<number | null>(null)
+  const [confirmarFecha,   setConfirmarFecha]    = useState<{ recordId: number; de: string; a: string; otros: number } | null>(null)
+  const [irARecordId,      setIrARecordId]       = useState<number | null>(null)
 
   // Columnas (diezmo/ofrenda/voto) disponibles por cada registro (record_id)
   const [columnasPorRegistro, setColumnasPorRegistro] = useState<Record<number, { id: number; nombre: string }[]>>({})
@@ -313,6 +353,39 @@ export default function EstadoIngresosPage() {
   }, [añoSel, mesSel])
 
   useEffect(() => { cargarDatos() }, [cargarDatos])
+
+  // ── Cambiar la fecha de un ingreso ───────────────────────────────────────
+  // La fecha está en el ingreso (income_records), no en cada fila: al cambiarla
+  // se mueve el ingreso completo, con todos sus sobres. No se borra nada.
+  async function pedirCambioFecha(recordId: number, de: string, a: string) {
+    setErrorFila('')
+    const { data, error: e } = await supabase.from('income_records').select('id').eq('fecha', a).neq('id', recordId)
+    if (e) { setErrorFila('Error al revisar la fecha: ' + e.message); return }
+    if (data && data.length > 0) { setConfirmarFecha({ recordId, de, a, otros: data.length }); return }
+    await aplicarCambioFecha(recordId, a)
+  }
+
+  async function aplicarCambioFecha(recordId: number, nuevaFecha: string) {
+    setConfirmarFecha(null)
+    setGuardandoFecha(recordId); setErrorFila('')
+    const { error: e } = await supabase.from('income_records').update({ fecha: nuevaFecha }).eq('id', recordId)
+    setGuardandoFecha(null)
+    if (e) { setErrorFila('Error al cambiar la fecha: ' + e.message); return }
+
+    // Al recargar, se abre la página de ese mismo ingreso
+    setIrARecordId(recordId)
+    const nuevoAño = nuevaFecha.slice(0, 4)
+    const nuevoMes = nuevaFecha.slice(5, 7)
+    if (nuevoAño !== añoSel || nuevoMes !== mesSel) {
+      // Pasó a otro mes o año: se cambia de pestaña y se recarga solo
+      setLoading(true)   // así se espera a que carguen los datos del mes nuevo
+      setAños(prev => prev.includes(nuevoAño) ? prev : [...prev, nuevoAño].sort())
+      setAñoSel(nuevoAño)
+      setMesSel(nuevoMes)
+    } else {
+      cargarDatos()
+    }
+  }
 
   // ── Modificar (una sola contraseña habilita las 4 funciones) ────────────
   function abrirModificar() {
@@ -714,6 +787,11 @@ export default function EstadoIngresosPage() {
     return lista
   }, [grupos])
   useEffect(() => { setPaginaIngreso(0) }, [mesSel, añoSel])
+  if (irARecordId !== null && !loading) {
+    const i = ingresosDelMes.findIndex(it => it.recordId === irARecordId)
+    setIrARecordId(null)
+    if (i >= 0 && i !== paginaIngreso) setPaginaIngreso(i)
+  }
   const paginaActual = Math.min(paginaIngreso, Math.max(0, ingresosDelMes.length - 1))
   const ingresoActual = ingresosDelMes[paginaActual]
 
@@ -790,7 +868,7 @@ export default function EstadoIngresosPage() {
           {errorFila && <div className="err">{errorFila}</div>}
           {modoEdicion && !loading && grupos.length > 0 && (
             <div className="edit-banner">
-              Modo Modificar activo: clic en un nombre para reasignarlo, en un valor para corregirlo, marca la casilla de una fila para eliminarla, o usa el <strong>+</strong> junto a <NombreIglesia forma="MAYUS_SIN" /> para agregar una ofrenda omitida ese día.
+              Modo Modificar activo: clic en la fecha de la fila de <NombreIglesia forma="MAYUS_SIN" /> para cambiar el día de todo el ingreso, en un nombre para reasignarlo, en un valor para corregirlo, marca la casilla de una fila para eliminarla, o usa el <strong>+</strong> junto a <NombreIglesia forma="MAYUS_SIN" /> para agregar una ofrenda omitida ese día.
             </div>
           )}
 
@@ -860,7 +938,15 @@ export default function EstadoIngresosPage() {
                           </td>
                           <td className="cc">{f.tc}</td>
                           <td className="cc"></td>
-                          <td className="cc">{g.fecha.split('-').reverse().join('/')}</td>
+                          <td className="cc">
+                            {modoEdicion && f.esIglesia ? (
+                              <EditarFechaInline
+                                valorActual={g.fecha}
+                                saving={guardandoFecha === f.recordId}
+                                onSave={v => pedirCambioFecha(f.recordId, g.fecha, v)}
+                              />
+                            ) : g.fecha.split('-').reverse().join('/')}
+                          </td>
                           <td className="cc">{f.cuenta}</td>
                           <td className="cc">{f.sc}</td>
                           <td className="cc">{f.aux}</td>
@@ -906,6 +992,24 @@ export default function EstadoIngresosPage() {
           )}
         </div>
       </div>
+
+      {/* Modal: ya hay otro ingreso en la fecha elegida */}
+      {confirmarFecha && (
+        <div className="modal-overlay" onClick={() => setConfirmarFecha(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Ya hay un ingreso ese día</div>
+            <div className="modal-sub">
+              El <b>{confirmarFecha.a.split('-').reverse().join('/')}</b> ya tiene {confirmarFecha.otros === 1 ? 'otro ingreso registrado' : `${confirmarFecha.otros} ingresos registrados`}.
+              Si sigues, el ingreso del {confirmarFecha.de.split('-').reverse().join('/')} pasa a ese día y quedan como
+              ingresos separados (no se juntan en uno solo).
+            </div>
+            <div className="modal-actions">
+              <button className="btn-modal-ghost" onClick={() => setConfirmarFecha(null)}>Cancelar</button>
+              <button className="btn-modal-primary" onClick={() => aplicarCambioFecha(confirmarFecha.recordId, confirmarFecha.a)}>Cambiar de todos modos</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: contraseña para activar el modo Modificar */}
       {showPassModal && (
