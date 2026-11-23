@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { usuarioActual } from '@/lib/auth'
+import AppShell from '@/components/AppShell'
 
 /*
  * Protege TODAS las páginas de /dashboard. Antes solo 3 páginas revisaban la
@@ -23,10 +24,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!ok) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EEF4FF', color: '#4A6090', fontFamily: 'sans-serif', fontSize: 14 }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', color: 'var(--muted)', fontFamily: 'var(--sans)', fontSize: 14 }}>
         Verificando sesión...
       </div>
     )
   }
-  return <>{children}</>
+  return <AppShell>{children}</AppShell>
 }

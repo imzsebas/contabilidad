@@ -1,5 +1,7 @@
 "use client"
 import { useRouter } from 'next/navigation'
+import { BASE_V3 } from '@/lib/estilosV3'
+import NombreIglesia from '@/components/NombreIglesia'
 
 const secciones = [
   {
@@ -12,10 +14,10 @@ const secciones = [
         <polyline points="17 6 23 6 23 12"/>
       </svg>
     ),
-    color: '#1A7A4A',
-    bg: '#E8F8F1',
-    border: '#A8DFC0',
-    iconBg: '#D4F1E4',
+    color: 'var(--navy)',
+    bg: 'var(--fill)',
+    border: 'var(--line)',
+    iconBg: 'var(--fill)',
   },
   {
     label: 'Egresos',
@@ -27,10 +29,10 @@ const secciones = [
         <polyline points="17 18 23 18 23 12"/>
       </svg>
     ),
-    color: '#C0392B',
-    bg: '#FEF0EF',
-    border: '#FBBCBC',
-    iconBg: '#FEE8E8',
+    color: 'var(--navy)',
+    bg: 'var(--fill)',
+    border: 'var(--line)',
+    iconBg: 'var(--fill)',
   },
   {
     label: 'Auxiliar',
@@ -45,10 +47,10 @@ const secciones = [
         <line x1="10" y1="9" x2="8" y2="9"/>
       </svg>
     ),
-    color: '#1A3A8F',
-    bg: '#EEF4FF',
-    border: '#C7D9FF',
-    iconBg: '#D8E4F8',
+    color: 'var(--navy)',
+    bg: 'var(--fill)',
+    border: 'var(--line)',
+    iconBg: 'var(--fill)',
   },
 ]
 
@@ -57,126 +59,7 @@ export default function EstadosFinancierosPage() {
 
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        .page {
-          min-height: 100vh;
-          background: #EEF4FF;
-          font-family: 'DM Sans', sans-serif;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* ── Top bar ── */
-        .top-bar {
-          background: linear-gradient(135deg, #1A3A8F 0%, #2B5BBF 60%, #3B6FD4 100%);
-          padding: 0 32px;
-          height: 68px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          position: sticky;
-          top: 0;
-          z-index: 50;
-          box-shadow: 0 2px 20px rgba(26,58,143,0.25);
-        }
-        .top-left { display: flex; align-items: center; gap: 14px; }
-        .back-btn {
-          background: rgba(255,255,255,0.12);
-          border: none; color: #fff;
-          width: 38px; height: 38px;
-          border-radius: 10px;
-          cursor: pointer;
-          display: flex; align-items: center; justify-content: center;
-          transition: background .2s;
-        }
-        .back-btn:hover { background: rgba(255,255,255,0.22); }
-        .top-title {
-          font-family: 'Playfair Display', serif;
-          font-size: 20px; font-weight: 700; color: #fff;
-        }
-        .top-subtitle { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 1px; }
-
-        /* ── Contenido ── */
-        .content {
-          flex: 1;
-          max-width: 900px;
-          margin: 0 auto;
-          width: 100%;
-          padding: 48px 24px;
-          position: relative;
-        }
-        .content::before {
-          content: '';
-          position: fixed;
-          bottom: -120px; right: -100px;
-          width: 600px; height: 600px;
-          background: radial-gradient(circle, #C7D9FF 0%, #EEF4FF 70%);
-          border-radius: 50%; z-index: 0; pointer-events: none;
-        }
-
-        .section-label {
-          font-size: 11px; font-weight: 500; color: #8A9CC0;
-          letter-spacing: .12em; text-transform: uppercase;
-          margin-bottom: 24px;
-          position: relative; z-index: 1;
-        }
-
-        /* ── Cards ── */
-        .cards {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-          gap: 20px;
-          position: relative; z-index: 1;
-        }
-
-        .card {
-          background: #fff;
-          border-radius: 18px;
-          padding: 32px 28px;
-          box-shadow: 0 2px 20px rgba(43,91,191,.07);
-          cursor: pointer;
-          transition: transform .22s, box-shadow .22s, border-color .22s;
-          border: 1.5px solid transparent;
-          animation: fadeUp .5s ease both;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-        .card:hover {
-          transform: translateY(-4px);
-          box-shadow: 0 10px 32px rgba(43,91,191,.13);
-        }
-
-        .card-icon-wrap {
-          width: 56px; height: 56px;
-          border-radius: 16px;
-          display: flex; align-items: center; justify-content: center;
-        }
-
-        .card-body { display: flex; flex-direction: column; gap: 6px; }
-        .card-label { font-size: 17px; font-weight: 600; }
-        .card-desc { font-size: 13px; color: #8A9CC0; }
-
-        .card-arrow {
-          margin-top: auto;
-          display: flex; align-items: center; gap: 6px;
-          font-size: 12px; font-weight: 500;
-        }
-
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(18px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-
-        @media (max-width: 600px) {
-          .top-bar { padding: 0 16px; }
-          .content { padding: 28px 16px; }
-          .cards { grid-template-columns: 1fr; }
-        }
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar */}
       <div className="top-bar">
@@ -188,7 +71,7 @@ export default function EstadosFinancierosPage() {
           </button>
           <div>
             <div className="top-title">Estados Financieros</div>
-            <div className="top-subtitle">Iglesia en Montería</div>
+            <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
       </div>
@@ -228,3 +111,15 @@ export default function EstadosFinancierosPage() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.section-label{font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.cards .card{display:flex;flex-direction:column;gap:12px;padding:16px;cursor:pointer;transition:border-color .15s}
+.cards .card:hover{border-color:#D6D0C4 !important}
+.card-icon-wrap{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
+.card-icon-wrap svg{width:20px;height:20px}
+.card-label{font-size:15px;font-weight:600}
+.card-desc{font-size:13px;color:var(--muted);margin-top:2px}
+.card-arrow{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+`

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="229 173.5 180 180" fill="none">
+  <path class="casa" d="M246 259 320 198 393 259" stroke="#E6EDF3" stroke-width="13.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path class="casa" d="M269.5 240v84a6 6 0 0 0 6 6h88a6 6 0 0 0 6-6v-84" stroke="#E6EDF3" stroke-width="13.5" stroke-linejoin="round"/>
+  <g class="izq" fill="#E6EDF3"><rect x="284" y="288" width="33.5" height="12" rx="6"/><rect x="284" y="304" width="33.5" height="12.5" rx="6.25"/></g>
+  <g class="der" fill="#3FB68E"><rect x="324" y="271" width="33.5" height="12.5" rx="6.25"/><rect x="324" y="287.5" width="33.5" height="12.5" rx="6.25"/><rect x="324" y="304" width="33.5" height="12.5" rx="6.25"/></g>
+</svg>

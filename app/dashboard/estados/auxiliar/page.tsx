@@ -5,6 +5,9 @@ import { supabase } from '@/lib/supabase'
 import { traerTodo, valoresEgresos, saldoAntesDe, saldoInicialDelAnio, tablaSaldosDisponible } from '@/lib/db'
 import { verificarClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { textosIglesia } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaAuxiliar {
@@ -257,7 +260,7 @@ export default function LibroAuxiliarPage() {
       // Título
       ws.mergeCells('A1:E1')
       const t1 = ws.getCell('A1')
-      t1.value = 'IGLESIA EN MONTERIA'; t1.font = { bold: true, size: 13, name: 'Arial', color: { argb: AZUL } }
+      t1.value = textosIglesia().MAYUS_SIN; t1.font = { bold: true, size: 13, name: 'Arial', color: { argb: AZUL } }
       t1.alignment = { horizontal: 'center' }
 
       ws.mergeCells('A2:E2')
@@ -417,73 +420,14 @@ export default function LibroAuxiliarPage() {
   const totalEgresos  = filas.reduce((s, f) => s + f.egreso,  0)
   const saldoFinal    = filas.length > 0 ? filas[filas.length - 1].saldo : 0
 
+  // Saldo al inicio del mes = saldo de la primera fila (saldo anterior)
+  const saldoInicioMes = filas.length > 0 ? filas[0].saldo - filas[0].ingreso + filas[0].egreso : 0
+  const maxSaldo = Math.max(1, ...filas.map(f => Math.abs(f.saldo)))
+  const abrirSaldo = () => { setModalPass(''); setModalMonto(saldoInicialCustom !== null ? String(saldoInicialCustom) : ''); setModalError(''); setShowModalSaldo(true) }
+
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif;display:flex;flex-direction:column}
-
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:68px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;box-shadow:0 2px 20px rgba(26,58,143,.25)}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:38px;height:38px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65);margin-top:1px}
-
-        .content{flex:1;padding:28px 32px}
-
-        .tabs-años{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:0}
-        .tab-año{padding:8px 22px;border:none;border-radius:10px 10px 0 0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;background:#D8E4F8;color:#4A6090;transition:all .2s}
-        .tab-año.active{background:#fff;color:#1A3A8F;font-weight:700;box-shadow:0 -2px 0 #2B5BBF inset}
-        .tab-año:hover:not(.active){background:#C7D9FF}
-
-        .tabs-meses-wrap{background:#fff;display:flex;overflow-x:auto;border-bottom:1.5px solid #D8E4F8}
-        .tab-mes{padding:11px 18px;border:none;border-bottom:2.5px solid transparent;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;background:none;color:#8A9CC0;transition:all .2s;white-space:nowrap;letter-spacing:.05em}
-        .tab-mes.active{color:#1A3A8F;border-bottom-color:#1A3A8F;font-weight:700}
-        .tab-mes:hover:not(.active){color:#1A3A8F;background:#F0F5FF}
-
-        .card{background:#fff;border-radius:0 0 16px 16px;box-shadow:0 4px 24px rgba(43,91,191,.08);overflow:hidden}
-
-        .info-bar{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1.5px solid #EEF4FF;flex-wrap:wrap;gap:12px}
-        .info-titulo{font-family:'Playfair Display',serif;font-size:15px;color:#0F2560;font-weight:700}
-        .resumen{display:flex;gap:24px;flex-wrap:wrap;margin-top:6px}
-        .resumen-item{font-size:12px;color:#4A6090}
-        .resumen-item strong{font-size:13px}
-        .ing{color:#1A7A4A} .egr{color:#C0392B} .saldo-pos{color:#1A7A4A} .saldo-neg{color:#C0392B}
-
-        .btn-excel{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #C7D9FF;background:#EEF4FF;color:#1A3A8F;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-excel:hover{background:#C7D9FF}
-        .btn-excel:disabled{opacity:.5;cursor:not-allowed}
-
-        .table-wrap{overflow-x:auto}
-        table{width:100%;border-collapse:collapse;font-size:12px;min-width:700px}
-        thead tr{background:#EEF4FF}
-        th{padding:10px 12px;font-size:10px;font-weight:600;color:#4A6090;letter-spacing:.06em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
-        th.cr{text-align:right} th.cl{text-align:left} th.cc{text-align:center}
-        td{padding:8px 12px;border-bottom:1px solid #F0F5FF;vertical-align:middle;color:#0F2560;font-size:12px}
-        .tr-ingreso td{background:#F0FFF6}
-        tbody tr:hover:not(.tr-totales){filter:brightness(.97)}
-        .tr-totales td{background:#1A3A8F;color:#fff;font-weight:700;font-size:12px}
-        .tr-sep td{height:8px;background:#F8FAFF;border:none}
-
-        .cc{text-align:center} .cr{text-align:right} .cl{text-align:left}
-        .val-ing{color:#1A7A4A;font-weight:600}
-        .val-egr{color:#C0392B;font-weight:600}
-        .val-saldo-pos{color:#1A7A4A;font-weight:700}
-        .val-saldo-neg{color:#C0392B;font-weight:700}
-        .tr-saldo-ant td{background:#F8FAFF;color:#4A6090;font-style:italic}
-        .desc-cell{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
-        .desc-cell:hover{overflow:visible;white-space:normal;position:relative;z-index:10;background:inherit}
-
-        .empty{text-align:center;padding:60px 20px;color:#8A9CC0;font-size:14px}
-        .load-wrap{text-align:center;padding:60px 20px;color:#8A9CC0}
-        .spinner{width:30px;height:30px;border:3px solid #C7D9FF;border-top-color:#1A3A8F;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .err{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;margin:16px 24px}
-
-        @media(max-width:768px){.content{padding:16px 12px}.top-bar{padding:0 16px}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar */}
       <div className="top-bar">
@@ -493,7 +437,7 @@ export default function LibroAuxiliarPage() {
           </button>
           <div>
             <div className="top-title">Libro Auxiliar de Contabilidad</div>
-            <div className="top-subtitle">Iglesia en Montería — Ingresos y Egresos</div>
+            <div className="top-subtitle"><NombreIglesia /> — Ingresos y Egresos</div>
           </div>
         </div>
       </div>
@@ -518,6 +462,35 @@ export default function LibroAuxiliarPage() {
           ))}
         </div>
 
+        {/* Resumen del mes */}
+        {!loading && filas.length > 0 && (
+          <>
+          <div className="v3-kpis">
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Saldo inicial del mes</p><p className="v3-kpi-val">${fmt(saldoInicioMes)}</p></div></div>
+              <button type="button" className="aux-kpi-btn" onClick={abrirSaldo}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>
+                {saldoInicialCustom !== null ? `Saldo inicial del año: $${fmt(saldoInicialCustom)}` : 'Ajustar saldo inicial'}
+              </button></div>
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Ingresos</p><p className="v3-kpi-val">+ ${fmt(totalIngresos)}</p></div></div><div className="v3-kpi-foot"><span>{MESES_NOM[mesSel]} {añoSel}</span><b>{filas.filter(f => f.esIngreso && f.ingreso > 0).length} mov.</b></div></div>
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Egresos</p><p className="v3-kpi-val">− ${fmt(totalEgresos)}</p></div></div><div className="v3-kpi-foot"><span>{MESES_NOM[mesSel]} {añoSel}</span><b>{filas.filter(f => f.egreso > 0).length} mov.</b></div></div>
+            <div className="v3-kpi navy"><div className="v3-kpi-body"><div><p className="v3-lbl">Saldo</p><p className="v3-kpi-val" style={saldoFinal < 0 ? {color:'var(--danger)'} : undefined}>${fmt(saldoFinal)}</p></div></div><div className="v3-kpi-foot"><span>Final del mes</span></div></div>
+          </div>
+          <div className="card">
+            <div className="card-title" style={{padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>Saldo día a día</div>
+            <div className="aux-chart" role="img" aria-label="Evolución del saldo durante el mes">
+              {filas.map((f, i) => {
+                const llenas = Math.round((Math.max(0, f.saldo) / maxSaldo) * 10)
+                return (
+                  <div key={i} className="aux-col" title={`${f.fecha.split('-').reverse().join('/')} · $${fmt(f.saldo)}`}>
+                    {Array.from({ length: 10 }, (_, k) => <span key={k} className={9 - k < llenas ? (f.esIngreso ? 'mid' : 'on') : ''} />)}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          </>
+        )}
+
         {/* Card tabla */}
         <div className="card">
           <div className="info-bar">
@@ -532,7 +505,7 @@ export default function LibroAuxiliarPage() {
               )}
             </div>
             <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-              <button className="btn-excel" onClick={() => { setModalPass(''); setModalMonto(saldoInicialCustom !== null ? String(saldoInicialCustom) : ''); setModalError(''); setShowModalSaldo(true) }}>
+              <button className="btn" onClick={() => { setModalPass(''); setModalMonto(saldoInicialCustom !== null ? String(saldoInicialCustom) : ''); setModalError(''); setShowModalSaldo(true) }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                 {saldoInicialCustom !== null ? `Saldo inicial: $${fmt(saldoInicialCustom)}` : 'Ajustar saldo inicial'}
               </button>
@@ -544,35 +517,35 @@ export default function LibroAuxiliarPage() {
 
             {/* Modal saldo inicial */}
             {showModalSaldo && (
-              <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center'}}
+              <div className="modal-overlay"
                    onClick={e => { if (e.target === e.currentTarget) setShowModalSaldo(false) }}>
-                <div style={{background:'#fff',borderRadius:16,padding:'32px 28px',width:340,boxShadow:'0 8px 40px rgba(26,58,143,.18)'}}>
-                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:'#0F2560',fontWeight:700,marginBottom:4}}>Ajustar saldo inicial</div>
-                  <div style={{fontSize:12,color:'#8A9CC0',marginBottom:20}}>Ingresa la contraseña y el monto de apertura del año {añoSel}{saldoPersistido ? '' : ' (no se guarda al recargar la página hasta aplicar el script SQL)'}</div>
+                <div className="modal-card">
+                  <div className="modal-title">Ajustar saldo inicial</div>
+                  <div className="modal-sub">Ingresa la contraseña y el monto de apertura del año {añoSel}{saldoPersistido ? '' : ' (no se guarda al recargar la página hasta aplicar el script SQL)'}</div>
 
-                  <label style={{fontSize:11,fontWeight:600,color:'#4A6090',letterSpacing:'.05em'}}>CONTRASEÑA</label>
+                  <label className="modal-field-label">Contraseña</label>
                   <input
                     type="password"
                     value={modalPass}
                     onChange={e => setModalPass(e.target.value)}
                     placeholder="••••••••"
-                    style={{width:'100%',marginTop:4,marginBottom:14,padding:'9px 12px',borderRadius:8,border:'1.5px solid #D8E4F8',fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:'none'}}
+                    className="modal-input" style={{marginTop:6}}
                   />
 
-                  <label style={{fontSize:11,fontWeight:600,color:'#4A6090',letterSpacing:'.05em'}}>SALDO INICIAL ($)</label>
+                  <label className="modal-field-label">Saldo inicial ($)</label>
                   <input
                     type="number"
                     value={modalMonto}
                     onChange={e => setModalMonto(e.target.value)}
                     placeholder="0"
-                    style={{width:'100%',marginTop:4,marginBottom:6,padding:'9px 12px',borderRadius:8,border:'1.5px solid #D8E4F8',fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:'none'}}
+                    className="modal-input v3-mono" style={{marginTop:6}}
                   />
 
-                  {modalError && <div style={{color:'#C0392B',fontSize:12,marginBottom:10}}>{modalError}</div>}
+                  {modalError && <div className="modal-error">{modalError}</div>}
 
-                  <div style={{display:'flex',gap:8,marginTop:12}}>
+                  <div className="modal-actions">
                     <button onClick={() => setShowModalSaldo(false)}
-                      style={{flex:1,padding:'9px 0',borderRadius:9,border:'1.5px solid #D8E4F8',background:'#EEF4FF',color:'#1A3A8F',fontSize:13,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      className="btn-modal-ghost">
                       Cancelar
                     </button>
                     <button disabled={guardandoSaldo} onClick={() => {
@@ -580,14 +553,14 @@ export default function LibroAuxiliarPage() {
                       if (isNaN(n)) { setModalError('Ingresa un monto válido'); return }
                       guardarSaldoInicial(n)
                     }}
-                      style={{flex:1,padding:'9px 0',borderRadius:9,border:'none',background:'#1A3A8F',color:'#fff',fontSize:13,cursor:'pointer',fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>
+                      className="btn-modal-primary">
                       {guardandoSaldo ? 'Verificando...' : 'Guardar'}
                     </button>
                   </div>
 
                   {saldoInicialCustom !== null && (
                     <button disabled={guardandoSaldo} onClick={() => guardarSaldoInicial(null)}
-                      style={{width:'100%',marginTop:10,padding:'8px 0',borderRadius:9,border:'1.5px solid #FBBCBC',background:'#FEE8E8',color:'#C0392B',fontSize:12,cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}>
+                      className="btn-danger" style={{width:'100%',marginTop:10}}>
                       Quitar saldo inicial personalizado
                     </button>
                   )}
@@ -646,3 +619,14 @@ export default function LibroAuxiliarPage() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.aux-kpi-btn{display:flex;align-items:center;gap:6px;padding:9px 14px;border:0;border-top:1px solid var(--line-2);background:var(--fill);border-radius:0 0 10px 10px;font:600 12px var(--sans);color:var(--navy);cursor:pointer;text-align:left}
+.aux-kpi-btn:hover{background:var(--navy-soft)}
+.aux-chart{display:flex;gap:4px;align-items:flex-end;height:130px;padding:14px;overflow-x:auto}
+.aux-col{flex:1 1 0;min-width:10px;max-width:48px;height:100%;display:flex;flex-direction:column;gap:3px}
+.aux-col span{flex:1 1 0;border-radius:2px;background:var(--empty)}
+.aux-col span.on{background:var(--navy)}
+.aux-col span.mid{background:var(--navy-mid)}
+table{min-width:640px}
+`

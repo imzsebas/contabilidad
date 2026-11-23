@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo } from '@/lib/db'
+import { BASE_V3 } from '@/lib/estilosV3'
+import NombreIglesia from '@/components/NombreIglesia'
 
 interface Member {
   id: number
@@ -23,6 +25,7 @@ export default function MiembrosPage() {
   const [members, setMembers]       = useState<Member[]>([])
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
+  const [estadoFiltro, setEstadoFiltro] = useState<'todos' | 'activos' | 'inactivos'>('todos')
   const [showForm, setShowForm]     = useState(false)
   const [editing, setEditing]       = useState<Member | null>(null)
   const [form, setForm]             = useState({ ...EMPTY_FORM })
@@ -53,9 +56,15 @@ export default function MiembrosPage() {
   }, [router, fetchMembers])
 
   const filtered = members.filter(m =>
-    m.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    m.cedula.includes(search)
+    (m.nombre.toLowerCase().includes(search.toLowerCase()) ||
+    m.cedula.includes(search)) &&
+    (estadoFiltro === 'todos' || (estadoFiltro === 'activos' ? m.activo : !m.activo))
   )
+  const totalActivos = members.filter(m => m.activo).length
+  function inicialesDe(nombre: string) {
+    const p = (nombre || '').trim().split(/\s+/).filter(Boolean)
+    return p.length ? (p[0][0] + (p[1]?.[0] || '')).toUpperCase() : '?'
+  }
 
   function openAdd() {
     setEditing(null)
@@ -66,10 +75,17 @@ export default function MiembrosPage() {
 
   function openEdit(m: Member) {
     setEditing(m)
-    setForm({ nombre: m.nombre, cedula: m.cedula, telefono: m.telefono, edad: m.edad, activo: m.activo })
+    setForm({ nombre: m.nombre ?? '', cedula: m.cedula ?? '', telefono: m.telefono ?? '', edad: m.edad ?? '', activo: m.activo ?? true })
     setShowForm(true)
     setError('')
   }
+
+  useEffect(() => {
+    if (!showForm) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeForm() }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [showForm])
 
   function closeForm() {
     setShowForm(false)
@@ -79,14 +95,14 @@ export default function MiembrosPage() {
   }
 
   async function handleSave() {
-    if (!form.nombre.trim()) { setError('El nombre es obligatorio.'); return }
-    if (!form.cedula.trim()) { setError('La cédula es obligatoria.'); return }
+    if (!(form.nombre ?? '').trim()) { setError('El nombre es obligatorio.'); return }
+    if (!(form.cedula ?? '').trim()) { setError('La cédula es obligatoria.'); return }
     setSaving(true); setError('')
     const payload = {
-      nombre:   form.nombre.trim(),
-      cedula:   form.cedula.trim(),
-      telefono: form.telefono.trim(),
-      edad:     form.edad === '' ? null : Number(form.edad),
+      nombre:   (form.nombre ?? '').trim(),
+      cedula:   (form.cedula ?? '').trim(),
+      telefono: (form.telefono ?? '').trim(),
+      edad:     form.edad === '' || form.edad === null || form.edad === undefined ? null : Number(form.edad),
       activo:   form.activo,
     }
     if (editing) {
@@ -116,265 +132,7 @@ export default function MiembrosPage() {
 
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap');
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        .page {
-          min-height: 100vh;
-          background: #EEF4FF;
-          font-family: 'DM Sans', sans-serif;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* ── TOP BAR ── */
-        .top-bar {
-          background: linear-gradient(135deg, #1A3A8F 0%, #2B5BBF 60%, #3B6FD4 100%);
-          padding: 0 32px;
-          height: 68px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          position: sticky;
-          top: 0;
-          z-index: 100;
-          box-shadow: 0 2px 20px rgba(26,58,143,0.25);
-        }
-        .top-left { display: flex; align-items: center; gap: 16px; }
-        .back-btn {
-          background: rgba(255,255,255,0.12);
-          border: none; cursor: pointer;
-          color: #fff; width: 38px; height: 38px;
-          border-radius: 10px;
-          display: flex; align-items: center; justify-content: center;
-          transition: background .2s;
-        }
-        .back-btn:hover { background: rgba(255,255,255,0.22); }
-        .top-title {
-          font-family: 'Playfair Display', serif;
-          font-size: 20px; font-weight: 700; color: #fff;
-        }
-        .top-subtitle { font-size: 12px; color: rgba(255,255,255,0.6); }
-
-        /* ── CONTENT ── */
-        .content {
-          flex: 1;
-          padding: 32px 40px;
-          max-width: 1100px;
-          width: 100%;
-          margin: 0 auto;
-          position: relative;
-        }
-        .content::before {
-          content: '';
-          position: fixed;
-          bottom: -120px; right: -100px;
-          width: 600px; height: 600px;
-          background: radial-gradient(circle, #C7D9FF 0%, #EEF4FF 70%);
-          border-radius: 50%; z-index: 0; pointer-events: none;
-        }
-
-        /* ── ALERTS ── */
-        .alert {
-          border-radius: 10px; padding: 12px 16px;
-          font-size: 13px; display: flex; align-items: center; gap: 8px;
-          margin-bottom: 16px; position: relative; z-index: 1;
-        }
-        .alert-success { background: #E8F8F1; border: 1.5px solid #A8DFC0; color: #1A7A4A; }
-        .alert-error   { background: #FEE8E8; border: 1.5px solid #FBBCBC; color: #C0392B; }
-
-        /* ── TOOLBAR ── */
-        .toolbar {
-          display: flex; gap: 12px; align-items: center;
-          margin-bottom: 20px; flex-wrap: wrap;
-          position: relative; z-index: 1;
-        }
-        .search-wrap {
-          flex: 1; min-width: 200px;
-          position: relative;
-        }
-        .search-wrap svg {
-          position: absolute; left: 12px; top: 50%;
-          transform: translateY(-50%); color: #8A9CC0; pointer-events: none;
-        }
-        .search-input {
-          width: 100%; padding: 10px 14px 10px 38px;
-          border: 1.5px solid #D8E4F8; border-radius: 10px;
-          font-family: 'DM Sans', sans-serif; font-size: 14px;
-          color: #0F2560; outline: none; background: #fff;
-          transition: border .2s;
-        }
-        .search-input:focus { border-color: #2B5BBF; box-shadow: 0 0 0 3px rgba(43,91,191,.1); }
-        .count-badge {
-          font-size: 12px; color: #8A9CC0; white-space: nowrap;
-          align-self: center;
-        }
-
-        /* ── BUTTONS ── */
-        .btn {
-          display: inline-flex; align-items: center; gap: 7px;
-          padding: 10px 18px; border-radius: 10px; border: none;
-          font-family: 'DM Sans', sans-serif; font-size: 13px;
-          font-weight: 500; cursor: pointer; transition: all .2s;
-          white-space: nowrap;
-        }
-        .btn-primary { background: #2B5BBF; color: #fff; box-shadow: 0 3px 12px rgba(43,91,191,.25); }
-        .btn-primary:hover { background: #1A3A8F; transform: translateY(-1px); }
-        .btn-danger  { background: #FEE8E8; color: #C0392B; border: 1.5px solid #FBBCBC; }
-        .btn-danger:hover  { background: #FBBCBC; }
-        .btn-ghost   { background: #EEF4FF; color: #2B5BBF; border: 1.5px solid #C7D9FF; }
-        .btn-ghost:hover   { background: #C7D9FF; }
-        .btn-sm { padding: 6px 12px; font-size: 12px; }
-        .btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
-
-        /* ── CARD ── */
-        .card {
-          background: #fff; border-radius: 16px;
-          box-shadow: 0 2px 16px rgba(43,91,191,.07);
-          border: 1.5px solid transparent;
-          overflow: hidden;
-          position: relative; z-index: 1;
-          margin-bottom: 20px;
-        }
-        .card-header {
-          padding: 20px 24px 0;
-          display: flex; align-items: center;
-          justify-content: space-between;
-        }
-        .card-title {
-          font-size: 12px; font-weight: 500; color: #4A6090;
-          letter-spacing: .08em; text-transform: uppercase;
-          display: flex; align-items: center; gap: 8px;
-        }
-
-        /* ── FORM CARD ── */
-        .form-card {
-          background: #fff; border-radius: 16px;
-          box-shadow: 0 4px 24px rgba(43,91,191,.12);
-          border: 1.5px solid #D8E4F8;
-          padding: 24px;
-          margin-bottom: 20px;
-          position: relative; z-index: 1;
-          animation: fadeDown .25s ease both;
-        }
-        @keyframes fadeDown {
-          from { opacity: 0; transform: translateY(-10px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        .form-title {
-          font-family: 'Playfair Display', serif;
-          font-size: 18px; font-weight: 700; color: #0F2560;
-          margin-bottom: 20px;
-          display: flex; align-items: center; justify-content: space-between;
-        }
-        .form-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-          gap: 16px;
-          margin-bottom: 20px;
-        }
-        .field { display: flex; flex-direction: column; gap: 6px; }
-        .field-label {
-          font-size: 11px; font-weight: 500; color: #4A6090;
-          letter-spacing: .06em; text-transform: uppercase;
-        }
-        .field-input {
-          padding: 10px 14px;
-          border: 1.5px solid #D8E4F8; border-radius: 10px;
-          font-family: 'DM Sans', sans-serif; font-size: 14px;
-          color: #0F2560; outline: none; transition: border .2s;
-        }
-        .field-input:focus { border-color: #2B5BBF; box-shadow: 0 0 0 3px rgba(43,91,191,.1); }
-
-        /* Toggle activo */
-        .toggle-wrap { display: flex; align-items: center; gap: 10px; padding-top: 22px; }
-        .toggle {
-          width: 42px; height: 24px; border-radius: 100px;
-          border: none; cursor: pointer; position: relative;
-          transition: background .2s; flex-shrink: 0;
-        }
-        .toggle.on  { background: #2B5BBF; }
-        .toggle.off { background: #D8E4F8; }
-        .toggle::after {
-          content: '';
-          position: absolute; top: 3px;
-          width: 18px; height: 18px;
-          background: #fff; border-radius: 50%;
-          transition: left .2s;
-          box-shadow: 0 1px 4px rgba(0,0,0,.2);
-        }
-        .toggle.on::after  { left: 21px; }
-        .toggle.off::after { left: 3px; }
-        .toggle-label { font-size: 14px; color: #0F2560; font-weight: 500; }
-
-        .form-actions { display: flex; gap: 10px; justify-content: flex-end; }
-
-        /* ── TABLE ── */
-        .table-wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; min-width: 500px; }
-        thead tr { background: #EEF4FF; }
-        th {
-          padding: 12px 16px; font-size: 11px; font-weight: 500;
-          color: #4A6090; letter-spacing: .06em; text-transform: uppercase;
-          border-bottom: 1.5px solid #D8E4F8; white-space: nowrap;
-          text-align: left;
-        }
-        td {
-          padding: 12px 16px; border-bottom: 1px solid #F0F5FF;
-          vertical-align: middle; font-size: 14px; color: #0F2560;
-        }
-        tbody tr:last-child td { border-bottom: none; }
-        tbody tr { transition: background .15s; }
-        tbody tr:hover { background: #FAFCFF; }
-
-        .member-name { font-weight: 500; color: #0F2560; }
-        .member-cedula { font-size: 12px; color: #8A9CC0; margin-top: 2px; }
-
-        .badge {
-          display: inline-flex; align-items: center; gap: 5px;
-          padding: 4px 10px; border-radius: 100px;
-          font-size: 11px; font-weight: 500;
-        }
-        .badge-active   { background: #E8F8F1; color: #1A7A4A; }
-        .badge-inactive { background: #F0F5FF; color: #8A9CC0; }
-        .badge-dot {
-          width: 6px; height: 6px; border-radius: 50%;
-        }
-        .badge-active .badge-dot   { background: #1A7A4A; }
-        .badge-inactive .badge-dot { background: #8A9CC0; }
-
-        .actions-cell { display: flex; gap: 8px; align-items: center; }
-
-        /* Confirm delete inline */
-        .confirm-row { display: flex; align-items: center; gap: 8px; }
-        .confirm-text { font-size: 12px; color: #C0392B; }
-
-        /* Empty state */
-        .empty {
-          padding: 48px 24px; text-align: center; color: #8A9CC0;
-        }
-        .empty svg { margin-bottom: 12px; opacity: .4; }
-        .empty p { font-size: 14px; }
-
-        /* Loading */
-        .loading {
-          padding: 48px; text-align: center; color: #8A9CC0; font-size: 14px;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .spinner {
-          display: inline-block; width: 20px; height: 20px;
-          border: 2px solid #D8E4F8; border-top-color: #2B5BBF;
-          border-radius: 50%; animation: spin .7s linear infinite;
-          margin-right: 8px; vertical-align: middle;
-        }
-
-        @media (max-width: 768px) {
-          .content { padding: 20px 16px; }
-          .top-bar  { padding: 0 16px; }
-          .form-grid { grid-template-columns: 1fr; }
-        }
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar */}
       <div className="top-bar">
@@ -386,7 +144,7 @@ export default function MiembrosPage() {
           </button>
           <div>
             <div className="top-title">Miembros</div>
-            <div className="top-subtitle">Iglesia en Montería</div>
+            <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
         <button className="btn btn-primary" onClick={openAdd}>
@@ -414,7 +172,8 @@ export default function MiembrosPage() {
 
         {/* Formulario */}
         {showForm && (
-          <div className="form-card">
+          <div className="modal-overlay" onMouseDown={closeForm}>
+          <div className="form-card form-modal" role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}>
             <div className="form-title">
               <span>{editing ? 'Editar miembro' : 'Nuevo miembro'}</span>
               <button className="btn btn-ghost btn-sm" onClick={closeForm}>✕ Cancelar</button>
@@ -484,7 +243,15 @@ export default function MiembrosPage() {
               </button>
             </div>
           </div>
+          </div>
         )}
+
+        {/* Resumen */}
+        <div className="v3-kpis">
+          <div className="v3-kpi navy"><div className="v3-kpi-body"><div><p className="v3-lbl">Total miembros</p><p className="v3-kpi-val">{loading ? '—' : members.length}</p></div></div><div className="v3-kpi-foot"><span>Registrados</span></div></div>
+          <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Activos</p><p className="v3-kpi-val">{loading ? '—' : totalActivos}</p></div></div><div className="v3-kpi-foot"><span>Estado activo</span></div></div>
+          <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Inactivos</p><p className="v3-kpi-val">{loading ? '—' : members.length - totalActivos}</p></div></div><div className="v3-kpi-foot"><span>Estado inactivo</span></div></div>
+        </div>
 
         {/* Toolbar búsqueda */}
         <div className="toolbar">
@@ -498,6 +265,11 @@ export default function MiembrosPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
+          </div>
+          <div className="v3-seg" role="group" aria-label="Filtrar por estado">
+            <button type="button" className={estadoFiltro === 'todos' ? 'on' : ''} onClick={() => setEstadoFiltro('todos')}>Todos</button>
+            <button type="button" className={estadoFiltro === 'activos' ? 'on' : ''} onClick={() => setEstadoFiltro('activos')}>Activos</button>
+            <button type="button" className={estadoFiltro === 'inactivos' ? 'on' : ''} onClick={() => setEstadoFiltro('inactivos')}>Inactivos</button>
           </div>
           <span className="count-badge">
             {filtered.length} {filtered.length === 1 ? 'miembro' : 'miembros'}
@@ -532,11 +304,16 @@ export default function MiembrosPage() {
                   {filtered.map(m => (
                     <tr key={m.id}>
                       <td>
-                        <div className="member-name">{m.nombre}</div>
-                        <div className="member-cedula">CC {m.cedula}</div>
+                        <div className="member-cell">
+                          <span className="member-ini">{inicialesDe(m.nombre)}</span>
+                          <span>
+                            <div className="member-name">{m.nombre}</div>
+                            <div className="member-cedula">CC {m.cedula}</div>
+                          </span>
+                        </div>
                       </td>
-                      <td>{m.telefono || <span style={{color:'#C7D9FF'}}>—</span>}</td>
-                      <td>{m.edad || <span style={{color:'#C7D9FF'}}>—</span>}</td>
+                      <td>{m.telefono || <span style={{color:'var(--muted)'}}>—</span>}</td>
+                      <td>{m.edad || <span style={{color:'var(--muted)'}}>—</span>}</td>
                       <td>
                         <span className={`badge ${m.activo ? 'badge-active' : 'badge-inactive'}`}>
                           <span className="badge-dot"/>
@@ -583,3 +360,25 @@ export default function MiembrosPage() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.content{max-width:none}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.form-card{background:var(--card);border:1px solid var(--navy-line);border-radius:10px;padding:16px;box-shadow:0 0 0 3px var(--navy-soft)}
+.form-title{display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:600;margin-bottom:14px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:14px}
+.form-actions{display:flex;gap:8px;justify-content:flex-end}
+th{text-align:left}
+td{font-size:13px}
+table{min-width:560px}
+.member-cell{display:flex;align-items:center;gap:10px}
+.member-ini{width:34px;height:34px;flex:none;border-radius:8px;background:var(--bg);color:var(--navy);font:700 12px var(--sans);display:flex;align-items:center;justify-content:center}
+.member-name{font-weight:600;color:var(--text)}
+.member-cedula{font:400 11px var(--mono);color:var(--muted);margin-top:2px}
+.actions-cell,.confirm-row{display:flex;gap:6px;align-items:center}
+.confirm-text{font-size:12px;color:var(--danger)}
+.spinner{display:inline-block;width:16px;height:16px;border-width:2px;margin:0 8px 0 0;vertical-align:middle}
+.empty svg{margin:0 auto 8px;display:block;color:var(--muted)}
+@media(max-width:768px){.form-grid{grid-template-columns:1fr}}
+.form-modal{width:100%;max-width:560px;max-height:calc(100vh - 40px);overflow:auto;margin:0;box-shadow:var(--shadow)}
+`

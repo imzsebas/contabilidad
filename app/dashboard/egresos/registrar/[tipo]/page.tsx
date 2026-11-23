@@ -1,7 +1,12 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { CLAVE_PREFILL, type Prefill } from '@/components/SubirComprobantes'
+import { useConfig, cargarConfig, config as leerConfig, textosIglesia, calcularRetencion, TIPOS_DEFAULT, type TipoEgreso } from '@/lib/configuracion'
+import { ListaPUC } from '@/components/config/Secciones'
+import { type ArchivoSoporte, tomarPendientes, prepararArchivo, esArchivoValido, subirSoportes, MAX_SOPORTES, MAX_MB_SOPORTE } from '@/lib/soportes'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -49,113 +54,72 @@ interface TipoConfig {
   docNumero: string
 }
 
-const CONFIGS: Record<string, TipoConfig> = {
-  'energia': {
-    label: 'Energía',
-    pagadoA: 'AFINIA GRUPO EPM (CARIBEMAR DE LA COSTA)',
-    conceptos: ['FACTURA DE ENERGIA CORRESPONDIENTE AL MES DE'],
-    cuentas: [
-      { codigo: '5135-30', cuenta: 'ENERGIA',      debito: 0, credito: 0 },
-      { codigo: '1105-05', cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '901.380.949-1',
-  },
-  'acueducto': {
-    label: 'Acueducto',
-    pagadoA: 'VEOLIA "AGUAS DE MONTERÍA"',
-    conceptos: ['PAGO FACTURA DE SERVICIO DE ACUEDUCTO Y ALCANTARILLADO MES'],
-    cuentas: [
-      { codigo: '5135-25', cuenta: 'ACUEDUCTO + ALCANTARILLADO', debito: 0, credito: 0 },
-      { codigo: '1105-05', cuenta: 'CAJA GENERAL',               debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '81.200.348-3',
-  },
-  'gas': {
-    label: 'Gas',
-    pagadoA: 'SURTIGAS S.A.E.S.P.',
-    conceptos: ['PAGO FACTURA SERVICIO DE GAS CORRESPONDIENTE AL MES DE'],
-    cuentas: [
-      { codigo: '51-35-55', cuenta: 'GAS',          debito: 0, credito: 0 },
-      { codigo: '1105-05',  cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '890.400.869-9',
-  },
-  'alquiler': {
-    label: 'Alquiler',
-    pagadoA: 'EN CASA FINCA RAIZ',
-    conceptos: ['PAGO CANON DE ARRIENDO CORRESPONDIENTE AL MES DE'],
-    cuentas: [
-      { codigo: '5120-10', cuenta: 'ARRIENDO',         debito: 0, credito: 0 },
-      { codigo: '2365-30',  cuenta: 'ARRIENDO RTE FTE', debito: 0, credito: 0 },
-      { codigo: '5305-20',    cuenta: 'INTERESES MORA',   debito: 0, credito: 0 },
-      { codigo: '1105-05',  cuenta: 'CAJA GENERAL',     debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '900.512.838-7',
-  },
-  'dian': {
-    label: 'DIAN',
-    pagadoA: 'DIAN',
-    conceptos: ['RETEFUENTE PAGO DE ARRIENDO DE'],
-    cuentas: [
-      { codigo: '2365-30', cuenta: 'RTE FTE ARRIENDO', debito: 0, credito: 0 },
-      { codigo: '1105-05', cuenta: 'CAJA GENERAL',     debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '800.197.268-4',
-  },
-  'obrero-local': {
-    label: 'Obrero Local',
-    pagadoA: 'LUIS GABRIEL ALVAREZ MARQUEZ',
-    conceptos: ['PAGO OFRENDA OBRERO LOCAL CORRESPONDIENTE AL MES DE'],
-    cuentas: [
-      { codigo: '5125-08',  cuenta: 'OTRAS CONTRIBUCIONES', debito: 0, credito: 0 },
-      { codigo: '1105-05',  cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
-    ],
-    docTipo: 'CC', docNumero: '85.203.032',
-  },
-  'diezmo-diezmo': {
-    label: 'Diezmo de Diezmo',
-    pagadoA: 'IGLESIA EN BOGOTÁ',
-    conceptos: ['CONSIGNACION OFRENDA VOTO DIEZMO DE DIEZMO'],
-    cuentas: [
-      { codigo: '5125-08', cuenta: 'OTRAS CONTRIBUCIONES', debito: 0, credito: 0 },
-      { codigo: '1105-05', cuenta: 'CAJA GENERAL',         debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '900.299.699-6',
-  },
-  'internet': {
-    label: 'Internet',
-    pagadoA: 'COLOMBIA TELECOMUNICACIONES S.A. E.S.P.',
-    conceptos: ['PAGO FACTURA SERVICIO DE INTERNET CORRESPONDIENTE AL MES DE'],
-    cuentas: [
-      { codigo: '5135-35', cuenta: 'INTERNET',     debito: 0, credito: 0 },
-      { codigo: '1105-05', cuenta: 'CAJA GENERAL', debito: 0, credito: 0 },
-    ],
-    docTipo: 'NIT', docNumero: '830.122.566-1',
-  },
-  'otro': {
-    label: 'Otro',
-    pagadoA: '',
-    conceptos: [],
-    cuentas: [
-      { codigo: '', cuenta: '', debito: 0, credito: 0 },
-      { codigo: '', cuenta: '', debito: 0, credito: 0 },
-    ],
-    docTipo: '', docNumero: '',
-  },
+// Los datos de cada tipo vienen de Configuración → Proveedores (tabla
+// expense_types). Si el script 05 no se ha ejecutado, se usan los de siempre
+// (TIPOS_DEFAULT en lib/configuracion.ts, idénticos a los que estaban aquí).
+function aConfig(t: TipoEgreso): TipoConfig {
+  return {
+    label: t.nombre, pagadoA: t.pagadoA, conceptos: t.conceptos,
+    cuentas: (t.cuentas.length ? t.cuentas : [{ codigo: '', cuenta: '' }]).map(c => ({ codigo: c.codigo, cuenta: c.cuenta, debito: 0, credito: 0 })),
+    docTipo: t.docTipo, docNumero: t.docNumero,
+  }
 }
 
 // ── Componente ─────────────────────────────────────────────────────────────
+// ── Estilo ORIGINAL del comprobante de egreso (NO MODIFICAR) ─────────────
+// El comprobante impreso / PDF debe verse exactamente igual que antes del
+// rediseño. Estas reglas son una copia literal de las originales, con el
+// prefijo .comprobante para que el nuevo diseño no las altere.
+const COMPROBANTE_ORIGINAL_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
+  .comprobante, .comprobante *{margin:0;padding:0;box-sizing:border-box;letter-spacing:normal;text-transform:none;line-height:inherit;font-style:normal;font-variant-numeric:normal}
+  .comprobante{line-height:1.5}
+  .comprobante{font-family:'DM Sans',sans-serif;color:#0F2560;background:#fff;border:0;border-radius:16px;padding:32px;box-shadow:0 4px 24px rgba(43,91,191,.1)}
+  .comprobante .comp-header{background:#1A3A8F;color:#fff;padding:12px 20px;border:0;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;margin:-32px -32px 24px}
+  .comprobante .comp-title{font-family:'DM Sans',sans-serif;font-size:16px;font-weight:700;letter-spacing:.04em;color:#fff}
+  .comprobante .comp-no{font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:#fff;background:rgba(255,255,255,.15);padding:4px 12px;border-radius:6px}
+  .comprobante .row-fields{display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap}
+  .comprobante .field-group{display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px}
+  .comprobante .field-label{font-family:'DM Sans',sans-serif;line-height:1.5;font-size:10px;font-weight:500;color:#8A9CC0;letter-spacing:.06em;text-transform:uppercase}
+  .comprobante .field-value{font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;font-weight:400;padding:8px 12px;background:#F8FAFF;border-radius:8px;border:1px solid #E8EFFD}
+  .comprobante .field-value.highlight{background:#EEF4FF;color:#1A3A8F;font-weight:600;font-size:16px}
+  .comprobante .letras-box{font-size:16px;line-height:1.5;color:#0F2560;background:#E8F8F1;border:1px solid #A8DFC0;border-radius:10px;padding:12px 16px;margin:0 0 16px;font-style:normal}
+  .comprobante .letras-label{font-size:10px;font-weight:500;color:#1A7A4A;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+  .comprobante .letras-value{font-size:13px;color:#0F2560;font-style:italic}
+  .comprobante .table-comp{width:100%;min-width:0;border-collapse:collapse;margin-bottom:16px;border-radius:10px;overflow:hidden;border:1.5px solid #D8E4F8;font-size:16px}
+  .comprobante .table-comp th{line-height:1.5;background:#EEF4FF;padding:10px 14px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
+  .comprobante .table-comp td{line-height:1.5;vertical-align:middle;padding:10px 14px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;border-bottom:1px solid #F0F5FF}
+  .comprobante .table-comp tr:last-child td{border-bottom:none}
+  .comprobante .table-comp .num{text-align:right;font-variant-numeric:tabular-nums}
+  .comprobante .bottom-row{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px;flex-wrap:wrap;gap:16px}
+  .comprobante .firma-box{border-top:2px solid #D8E4F8;padding-top:8px;min-width:200px}
+  .comprobante .firma-label{font-size:11px;color:#8A9CC0}
+  .comprobante .doc-box{font-size:13px;color:#0F2560}
+`
+
 export default function FormularioEgreso() {
-  const router = useRouter()
   const params = useParams()
   const tipo   = (params?.tipo as string) || 'otro'
-  const config = CONFIGS[tipo] || CONFIGS['otro']
+  const cfg    = useConfig()
+  useEffect(() => { cargarConfig() }, [])
+  if (!cfg.listo) {
+    return <div className="page"><style>{BASE_V3}</style><div className="content"><div style={{padding:40,textAlign:'center',color:'var(--muted)'}}>Cargando…</div></div></div>
+  }
+  const t = cfg.tipos.find(x => x.id === tipo)
+    || TIPOS_DEFAULT.find(x => x.id === tipo)
+    || cfg.tipos.find(x => x.esLibre) || TIPOS_DEFAULT[TIPOS_DEFAULT.length - 1]
+  return <FormularioEgresoForm key={tipo} tipo={tipo} config={aConfig(t)} esLibre={t.esLibre} />
+}
+
+function FormularioEgresoForm({ tipo, config, esLibre }: { tipo: string; config: TipoConfig; esLibre: boolean }) {
+  const router = useRouter()
+  const ig     = textosIglesia()
 
   const today = new Date().toISOString().split('T')[0]
 
   const [numero,       setNumero]       = useState('')
   const [fecha,        setFecha]        = useState('')
-  const [ciudad,       setCiudad]       = useState('MONTERÍA')
+  const [ciudad,       setCiudad]       = useState(ig.CIUDAD)
   const [pagadoA,      setPagadoA]      = useState(config.pagadoA)
   const [concepto,     setConcepto]     = useState('')
   const [conceptoCustom, setConceptoCustom] = useState('')
@@ -174,9 +138,16 @@ export default function FormularioEgreso() {
   const [step,         setStep]         = useState(1)
   const [showFinalModal, setShowFinalModal] = useState(false)
   const [aceptoDescuadre, setAceptoDescuadre] = useState(false)
+  // Soportes adjuntos (fotos / PDF). Opcionales.
+  const [soportes,       setSoportes]       = useState<ArchivoSoporte[]>([])
+  const [soporteAviso,   setSoporteAviso]   = useState('')
+  const [soporteError,   setSoporteError]   = useState('')
+  const [soportesOk,     setSoportesOk]     = useState(0)
+  const [recordId,       setRecordId]       = useState<number | null>(null)
+  const [subiendo,       setSubiendo]       = useState(false)
 
   const necesitaDocumento = !config.docNumero
-  const necesitaPagadoA   = tipo === 'otro'
+  const necesitaPagadoA   = esLibre
   const TOTAL_STEPS = 4
   const STEP_LABELS = ['Fecha', 'Pago', 'Cuentas', 'Adicional']
 
@@ -185,14 +156,54 @@ export default function FormularioEgreso() {
     supabase.from('expense_records').select('numero').order('numero', { ascending: false, nullsFirst: false }).limit(1)
       .then(({ data }) => {
         const last = data?.[0]?.numero || 0
-        setNumero(String(last + 1))
+        // "Empezar en el número" de Configuración (solo si es mayor: nunca repite)
+        const desde = leerConfig().numeracion.proximoEgreso || 0
+        setNumero(String(Math.max(last + 1, desde)))
       })
-    const stored = sessionStorage.getItem('user')
-    if (stored) {
-      const user = JSON.parse(stored)
-      setElaboradoPorState(user.name || '')
+    const porDefecto = leerConfig().numeracion.elaboradoPor
+    if (porDefecto) setElaboradoPorState(porDefecto)
+    else {
+      const stored = sessionStorage.getItem('user')
+      if (stored) {
+        const user = JSON.parse(stored)
+        setElaboradoPorState(user.name || '')
+      }
     }
   }, [])
+
+  // ── Datos leídos de comprobantes (si se llegó desde "Subir comprobante") ──
+  const [prefill, setPrefill] = useState<Prefill | null>(null)
+  useEffect(() => {
+    let p: Prefill | null = null
+    try { p = JSON.parse(sessionStorage.getItem(CLAVE_PREFILL) || 'null') } catch { p = null }
+    if (!p || p.tipo !== tipo) return
+    sessionStorage.removeItem(CLAVE_PREFILL)
+    const MESES_MAY = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE']
+    if (p.fecha) setFecha(p.fecha)
+    if (p.total > 0) setValor(fmt(p.total))
+    setEfectivo(p.efectivo)
+    if (config.conceptos.length > 0) {
+      setConcepto(config.conceptos[0])
+      if (p.fecha) setMesAnio(`${MESES_MAY[parseInt(p.fecha.slice(5, 7)) - 1]} ${p.fecha.slice(0, 4)}`)
+    } else if (p.concepto) {
+      setConceptoCustom(p.concepto)
+    }
+    if (esLibre) {
+      if (p.destinatario) setPagadoA(p.destinatario.toUpperCase())
+      if (p.nit) { setDocNumero(p.nit); setDocTipo(/[a-zA-Z]/.test(p.nit) ? '' : (p.nit.replace(/\D/g, '').length >= 9 ? 'NIT' : 'CC')) }
+    }
+    // Si el tipo tiene solo 2 cuentas (gasto + caja), se llena débito y crédito con el total
+    if (p.total > 0) {
+      setCuentas(prev => prev.length === 2
+        ? prev.map((c, i) => i === 0 ? { ...c, debito: p!.total, credito: 0 } : { ...c, debito: 0, credito: p!.total })
+        : prev)
+    }
+    setPrefill(p)
+    // Las fotos/PDF que se leyeron quedan como soporte del egreso
+    const pend = tomarPendientes()
+    if (pend.length) setSoportes(pend.map(f => ({ archivo: f, origen: 'comprobante_ia' as const })))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipo])
 
   const valorNum = parseInt(valor.replace(/\D/g, '')) || 0
   const enLetras = numeroALetras(valorNum)
@@ -214,6 +225,13 @@ export default function FormularioEgreso() {
       idx === i ? { ...c, [field]: field === 'debito' || field === 'credito'
         ? (parseInt(val.replace(/\D/g,'')) || 0) : val } : c
     ))
+  }
+
+  // Al escribir un código que está en el plan de cuentas, se completa el nombre
+  function cambiarCodigo(i: number, v: string) {
+    setCuenta(i, 'codigo', v)
+    const enPuc = leerConfig().puc.find(x => x.codigo === v.trim())
+    if (enPuc && !cuentas[i]?.cuenta) setCuenta(i, 'cuenta', enPuc.nombre)
   }
 
   function agregarCuenta() {
@@ -268,6 +286,9 @@ export default function FormularioEgreso() {
         if (e2) throw e2
       }
       setSaved(true)
+      setRecordId(rec.id)
+      // El egreso ya quedó guardado; ahora se suben los soportes (si hay)
+      if (soportes.length > 0) await subirPendientes(rec.id, soportes)
       return true
     } catch (e: any) {
       setError('Error al guardar: ' + (e.message || 'Intenta de nuevo'))
@@ -275,6 +296,46 @@ export default function FormularioEgreso() {
     } finally {
       setSaving(false)
     }
+  }
+
+  async function subirPendientes(id: number, lista: ArchivoSoporte[]) {
+    setSubiendo(true); setSoporteError('')
+    try {
+      const { fallidos, error } = await subirSoportes(id, lista)
+      setSoportesOk(n => n + (lista.length - fallidos.length))
+      setSoportes(fallidos)
+      if (fallidos.length) setSoporteError(`El egreso se guardó, pero ${fallidos.length === 1 ? '1 soporte no se pudo subir' : fallidos.length + ' soportes no se pudieron subir'}. ${error}`)
+    } catch (e) {
+      setSoporteError('El egreso se guardó, pero los soportes no se pudieron subir. ' + (e instanceof Error ? e.message : ''))
+    } finally {
+      setSubiendo(false)
+    }
+  }
+
+  async function adjuntarSoportes(lista: FileList | null) {
+    if (!lista || !lista.length) return
+    setSoporteAviso('')
+    const todos = Array.from(lista)
+    const validos = todos.filter(esArchivoValido)
+    const avisos: string[] = []
+    if (validos.length < todos.length) avisos.push('Solo se aceptan fotos o PDF.')
+    const espacio = MAX_SOPORTES - soportes.length
+    if (validos.length > espacio) avisos.push(`Máximo ${MAX_SOPORTES} soportes por egreso.`)
+    const nuevos: ArchivoSoporte[] = []
+    for (const f of validos.slice(0, Math.max(0, espacio))) {
+      const prep = await prepararArchivo(f)
+      if (prep.size > MAX_MB_SOPORTE * 1024 * 1024) { avisos.push(`"${f.name}" pesa más de ${MAX_MB_SOPORTE} MB.`); continue }
+      nuevos.push({ archivo: prep, origen: 'manual' })
+    }
+    if (avisos.length) setSoporteAviso(avisos.join(' '))
+    if (nuevos.length) {
+      if (saved && recordId) await subirPendientes(recordId, nuevos)   // ya guardado: se sube de una vez
+      else setSoportes(prev => [...prev, ...nuevos])
+    }
+  }
+
+  function quitarSoporte(i: number) {
+    setSoportes(prev => prev.filter((_, idx) => idx !== i))
   }
 
   function irADescargar() {
@@ -337,111 +398,95 @@ export default function FormularioEgreso() {
     }
   }
 
-  const sharedStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-    *{margin:0;padding:0;box-sizing:border-box}
-    .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif}
-    .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:50}
-    .top-left{display:flex;align-items:center;gap:14px}
-    .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:36px;height:36px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-    .back-btn:hover{background:rgba(255,255,255,.22)}
-    .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-    .top-subtitle{font-size:12px;color:rgba(255,255,255,.65)}
-    .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 20px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-    .btn-primary{background:#2B5BBF;color:#fff;box-shadow:0 3px 12px rgba(43,91,191,.25)}
-    .btn-primary:hover{background:#1A3A8F;transform:translateY(-1px)}
-    .btn-secondary{background:#fff;color:#4A6090;border:1.5px solid #D8E4F8}
-    .btn-secondary:hover{background:#F4F8FF}
-    .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
-    .content{max-width:780px;margin:0 auto;padding:32px 24px}
-    .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 16px rgba(43,91,191,.08);margin-bottom:20px}
-    .card-title{font-size:12px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;margin-bottom:18px;display:flex;align-items:center;gap:8px}
-    .card-title svg{color:#2B5BBF}
+  const sharedStyles = BASE_V3 + `
+    .content{max-width:1200px}
+    .content > .alert-error,.content > .alert-success{margin:0}
+    .fm-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+    .fm-main{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:12px}
+    .fm-side{flex:1 1 280px;min-width:0}
+    .fm-side-col{display:flex;flex-direction:column;gap:12px}
+    .fm-side-col > .card{margin:0}
+    .sp-tag{margin-left:auto;font:500 10px var(--mono);letter-spacing:.06em;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:2px 6px}
+    .sp-list{display:flex;flex-direction:column;gap:6px}
+    .sp-item{display:flex;align-items:center;gap:10px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--fill)}
+    .sp-thumb{width:34px;height:34px;border-radius:6px;flex-shrink:0;object-fit:cover;background:var(--card);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font:600 9px var(--mono);color:var(--danger)}
+    .sp-info{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+    .sp-name{font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sp-meta{font:400 11px var(--mono);color:var(--muted)}
+    .sp-add{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;border:1px dashed var(--line-strong);border-radius:8px;background:var(--card);color:var(--navy);font:500 13px var(--sans);cursor:pointer}
+    .sp-add:hover{background:var(--fill)}
+    .sp-add input{display:none}
+    .sp-help{font-size:12px;color:var(--muted);line-height:1.45}
+    .sp-ok{font-size:12px;color:var(--ok);font-weight:600}
+    .sp-warn{font-size:12px;color:var(--danger)}
+    .fm-side-body{padding:14px;display:flex;flex-direction:column;gap:8px}
+    .fm-total{font:600 28px var(--mono);color:var(--navy);letter-spacing:-.02em}
+    .fm-letras{font-size:12px;color:var(--muted);line-height:1.4}
+    .fm-row{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-top:1px solid var(--line-2);font-size:13px}
+    .fm-row span:first-child{color:var(--muted);flex:none;white-space:nowrap}
+    .fm-row span:last-child{text-align:right;font-weight:500;word-break:break-word}
+    .pf-box{border:1px solid var(--navy-line);background:var(--navy-soft);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+    .pf-head{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;font-size:13px;color:var(--text-2)}
+    .pf-head b{color:var(--navy);font-size:14px}
+    .pf-list{display:flex;flex-wrap:wrap;gap:6px}
+    .pf-chip{padding:4px 10px;border-radius:999px;background:var(--card);border:1px solid var(--navy-line);font:400 12px var(--mono);color:var(--text-2)}
+    .pf-chip b{color:var(--text)}
+    .pf-chip.total{background:var(--navy);border-color:var(--navy);color:#fff}
+    .pf-chip.total b{color:#fff}
+    .pf-warn{list-style:none;display:flex;flex-direction:column;gap:4px;font-size:12px;color:#6E4E00}
+    .fm-cuadre{display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;border-radius:8px;font-size:13px}
+    .fm-cuadre.ok{background:var(--navy-soft);box-shadow:inset 0 0 0 1px var(--navy-line);color:var(--navy)}
+    .fm-cuadre.no{background:var(--warn-soft);box-shadow:inset 0 0 0 1px var(--warn-line);color:var(--warn)}
+    .fm-cuadre b{font-family:var(--mono)}
+    .acc-total td{background:var(--fill);border-top:1.5px solid var(--line);border-bottom:0;font:600 13px var(--mono);color:var(--text);letter-spacing:.04em}
+    .acc-total td:first-child{padding-left:14px}
+    .acc-total .acc-total-num{text-align:right;padding-right:22px;color:var(--navy);white-space:nowrap}
+    .acc-total.descuadre .acc-total-num{color:var(--danger)}
+    .rte-box{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--fill);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+    .rte-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px}
+    .rte-head span{font:400 12px var(--mono);color:var(--muted)}
+    .rte-body{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .rte-body label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+    .rte-body .num-input{width:150px}
+    .rte-res{flex:1;font-size:13px;color:var(--text-2)}
+    .rte-res b{font-family:var(--mono);color:var(--navy)}
+    .rte-box small{font-size:11.5px;color:var(--muted)}
+    .card{padding:14px}
+    .card > .card-title{margin:-14px -14px 14px;padding:10px 14px;border-bottom:1px solid var(--line-2)}
+    .card > .table-wrap{margin:0 -14px}
     .row{display:flex;gap:16px;flex-wrap:wrap}
-    .field{display:flex;flex-direction:column;gap:6px;flex:1;min-width:160px}
+    .row > .field{flex:1;min-width:200px}
     .field.small{flex:0.4;min-width:120px}
-    .label{font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase}
-    .input{padding:11px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s,box-shadow .2s;background:#fff}
-    .input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-    .input.big{font-size:18px;font-weight:600;color:#1A3A8F}
-    select.input{cursor:pointer}
-    textarea.input{resize:vertical;min-height:80px}
-    .fecha-alerta{background:#FFF8E8;border:1.5px solid #FFC94A;border-radius:10px;padding:10px 14px;font-size:12px;color:#7A5000;display:flex;align-items:center;gap:8px;margin-top:8px}
-    .toggle-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .toggle-btn{padding:8px 16px;border-radius:8px;border:1.5px solid #D8E4F8;background:#F8FAFF;color:#8A9CC0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-    .toggle-btn.active{background:#EEF4FF;color:#2B5BBF;border-color:#2B5BBF}
-    .table-wrap{overflow-x:auto;border-radius:10px;border:1.5px solid #D8E4F8}
-    table{width:100%;border-collapse:collapse}
-    thead tr{background:#EEF4FF}
-    th{padding:10px 12px;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
-    td{padding:6px 8px;border-bottom:1px solid #F0F5FF}
-    tbody tr:last-child td{border-bottom:none}
-    .num-input{width:100%;padding:8px 10px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;text-align:right;outline:none;transition:border .2s}
-    .num-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-    .text-input-sm{width:100%;padding:8px 10px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;outline:none;transition:border .2s}
-    .text-input-sm:focus{border-color:#2B5BBF}
-    .btn-danger-sm{padding:5px 10px;background:#FEE8E8;color:#C0392B;border:1.5px solid #FBBCBC;border-radius:7px;cursor:pointer;font-size:12px;transition:all .2s}
-    .btn-danger-sm:hover{background:#FBBCBC}
-    .btn-add{padding:8px 14px;background:#EEF4FF;color:#2B5BBF;border:1.5px solid #C7D9FF;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
-    .btn-add:hover{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
-    .alert-error{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
-    .alert-success{background:#E8F8F1;border:1.5px solid #A8DFC0;color:#1A7A4A;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
-    .actions-row{display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap}
-    .progress-wrap{max-width:780px;margin:0 auto;padding:20px 24px 0}
-    .progress-steps{display:flex;align-items:center;gap:8px}
-    .progress-step{flex:1;display:flex;flex-direction:column;gap:6px}
-    .progress-bar-bg{height:5px;border-radius:3px;background:#D8E4F8;overflow:hidden}
-    .progress-bar-fill{height:100%;background:#2B5BBF;transition:width .25s}
-    .progress-label{font-size:10px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:#8A9CC0}
-    .progress-label.active{color:#2B5BBF}
-    .progress-label.done{color:#1A7A4A}
-    .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
-    .modal-box{background:#fff;border-radius:18px;padding:28px;max-width:380px;width:100%;box-shadow:0 12px 48px rgba(15,37,96,.3)}
-    .modal-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#0F2560;margin-bottom:6px}
-    .modal-subtitle{font-size:13px;color:#8A9CC0;margin-bottom:20px}
-    .modal-actions{display:flex;flex-direction:column;gap:10px}
-    .modal-cancel{margin-top:14px;background:none;border:none;color:#8A9CC0;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;width:100%;text-align:center;padding:6px}
-    .modal-cancel:hover{color:#4A6090}
+    .actions-row{display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap}
+    .actions-row .btn{height:38px}
+    .progress-wrap{padding:12px 20px 0}
+    .progress-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .progress-step{display:flex;flex-direction:column;gap:8px}
+    .progress-bar-bg{height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+    .progress-bar-fill{height:100%;background:var(--navy);transition:width .25s}
+    .progress-label{font:500 12px var(--sans);color:var(--muted)}
+    .progress-label.active{color:var(--navy);font-weight:600}
+    .progress-label.done{color:var(--text)}
+    table{min-width:520px}
+    th{text-align:left}
     @media print{
-      .top-bar,.actions-bar{display:none!important}
+      .top-bar,.actions-bar,.no-print{display:none!important}
       .page{background:#fff}
-      .content{padding:0;max-width:100%}
-      .comprobante{box-shadow:none;border-radius:0;padding:20px}
+      .content{display:block;padding:0;max-width:100%}
+      .content .alert-success{background:#E8F8F1;border:1.5px solid #A8DFC0;color:#1A7A4A;border-radius:10px;padding:12px 16px;font-family:'DM Sans',sans-serif;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
     }
-    @media(max-width:600px){.content{padding:16px}.row{flex-direction:column}}
+    @media(max-width:600px){.row{flex-direction:column}}
   `
 
   // ── Vista previa del comprobante ──────────────────────────────────────
   if (preview) {
     return (
       <div className="page">
+        <style>{COMPROBANTE_ORIGINAL_CSS}</style>
         <style>{sharedStyles + `
-          .comprobante{background:#fff;border-radius:16px;padding:32px;box-shadow:0 4px 24px rgba(43,91,191,.1)}
-          .comp-header{background:#1A3A8F;color:#fff;padding:12px 20px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;margin:-32px -32px 24px}
-          .comp-title{font-size:16px;font-weight:700;letter-spacing:.04em}
-          .comp-no{font-size:14px;font-weight:500;background:rgba(255,255,255,.15);padding:4px 12px;border-radius:6px}
-          .row-fields{display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap}
-          .field-group{display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px}
-          .field-label{font-size:10px;font-weight:500;color:#8A9CC0;letter-spacing:.06em;text-transform:uppercase}
-          .field-value{font-size:14px;color:#0F2560;font-weight:400;padding:8px 12px;background:#F8FAFF;border-radius:8px;border:1px solid #E8EFFD}
-          .field-value.highlight{background:#EEF4FF;color:#1A3A8F;font-weight:600;font-size:16px}
-          .letras-box{background:#E8F8F1;border:1px solid #A8DFC0;border-radius:10px;padding:12px 16px;margin-bottom:16px}
-          .letras-label{font-size:10px;font-weight:500;color:#1A7A4A;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
-          .letras-value{font-size:13px;color:#0F2560;font-style:italic}
-          .table-comp{width:100%;border-collapse:collapse;margin-bottom:16px;border-radius:10px;overflow:hidden;border:1.5px solid #D8E4F8}
-          .table-comp th{background:#EEF4FF;padding:10px 14px;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1.5px solid #D8E4F8}
-          .table-comp td{padding:10px 14px;font-size:13px;color:#0F2560;border-bottom:1px solid #F0F5FF}
-          .table-comp tr:last-child td{border-bottom:none}
-          .table-comp .num{text-align:right;font-variant-numeric:tabular-nums}
-          .bottom-row{display:flex;justify-content:space-between;align-items:flex-end;margin-top:8px;flex-wrap:wrap;gap:16px}
-          .firma-box{border-top:2px solid #D8E4F8;padding-top:8px;min-width:200px}
-          .firma-label{font-size:11px;color:#8A9CC0}
-          .doc-box{font-size:13px;color:#0F2560}
-          .actions-bar{display:flex;gap:10px;flex-wrap:wrap}
-          .btn-print{background:#2BC48A;color:#fff;box-shadow:0 3px 12px rgba(43,196,138,.3)}
-          .btn-print:hover{background:#1A9E6E}
-          .btn-save{background:#2B5BBF;color:#fff;box-shadow:0 3px 12px rgba(43,91,191,.3)}
-          .btn-save:hover{background:#1A3A8F}
+          .sp-note{font-size:13px;color:var(--text-2);background:var(--navy-soft);border:1px solid var(--navy-line);border-radius:8px;padding:9px 12px}
+          .modal-actions{flex-direction:column}
+          .modal-actions .btn{height:38px}
         `}</style>
 
         <div className="top-bar">
@@ -456,7 +501,7 @@ export default function FormularioEgreso() {
           </div>
           <div className="actions-bar">
             {saved
-              ? <span style={{color:'#fff',fontSize:13}}>✓ Guardado</span>
+              ? <span style={{color:'var(--ok)',fontSize:13,fontWeight:600}}>✓ Guardado</span>
               : <button className="btn btn-save" onClick={() => setShowFinalModal(true)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
                   Finalizar
@@ -468,10 +513,23 @@ export default function FormularioEgreso() {
         <div className="content">
           {saved && <div className="alert-success"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>Registro guardado exitosamente.</div>}
           {error && <div className="alert-error"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>{error}</div>}
+          {soporteError && (
+            <div className="alert-error no-print" style={{justifyContent:'space-between',flexWrap:'wrap'}}>
+              <span>{soporteError}</span>
+              {recordId && soportes.length > 0 && (
+                <button className="btn btn-sm" disabled={subiendo} onClick={() => subirPendientes(recordId, soportes)}>
+                  {subiendo ? 'Subiendo…' : 'Reintentar'}
+                </button>
+              )}
+            </div>
+          )}
+          {!saved && soportes.length > 0 && (
+            <div className="sp-note no-print"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" style={{display:"inline-block",verticalAlign:-2,marginRight:6}}><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>{soportes.length === 1 ? '1 soporte se guardará' : soportes.length + ' soportes se guardarán'} adjunto{soportes.length === 1 ? '' : 's'} a este egreso.</div>
+          )}
 
           <div className="comprobante">
             <div className="comp-header">
-              <div className="comp-title">COMPROBANTE DE EGRESO — IGLESIA EN MONTERÍA</div>
+              <div className="comp-title">COMPROBANTE DE EGRESO — {ig.MAYUS}</div>
               <div className="comp-no">No. {numero}</div>
             </div>
 
@@ -553,7 +611,7 @@ export default function FormularioEgreso() {
               <div className="modal-subtitle">Comprobante No. {numero} — {config.label}</div>
               <div className="modal-actions">
                 <button className="btn btn-save" onClick={handleGuardarYDescargar} disabled={saving} style={{justifyContent:'center'}}>
-                  {saving ? 'Guardando...' : <>
+                  {saving ? (subiendo ? 'Subiendo soportes...' : 'Guardando...') : <>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                     Guardar y descargar
                   </>}
@@ -610,6 +668,26 @@ export default function FormularioEgreso() {
       <div className="content">
         {error && <div className="alert-error"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>{error}</div>}
 
+        {prefill && (
+          <div className="pf-box">
+            <div className="pf-head">
+              <b>Prellenado desde {prefill.comprobantes.length} comprobante{prefill.comprobantes.length > 1 ? 's' : ''}</b>
+              <span>Revisa cada paso antes de finalizar: fecha, valor, concepto y cuentas.</span>
+            </div>
+            <div className="pf-list">
+              {prefill.comprobantes.map((c, i) => (
+                <span key={i} className="pf-chip">{c.fecha ? c.fecha.split('-').reverse().join('/') : 'Sin fecha'} · <b>${fmt(c.valor)}</b>{c.referencia ? ` · Ref. ${c.referencia}` : ''}</span>
+              ))}
+              <span className="pf-chip total">Total <b>${fmt(prefill.total)}</b></span>
+            </div>
+            {prefill.advertencias.length > 0 && (
+              <ul className="pf-warn">{prefill.advertencias.map((a, i) => <li key={i}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{display:"inline-block",verticalAlign:-2,marginRight:4,flex:"none"}}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg>{a}</li>)}</ul>
+            )}
+          </div>
+        )}
+
+        <div className="fm-wrap">
+        <div className="fm-main">
         {/* Paso 1 — Fecha */}
         {step === 1 && (
           <div className="card">
@@ -651,7 +729,7 @@ export default function FormularioEgreso() {
             </div>
 
             {valorNum > 0 && (
-              <div style={{background:'#E8F8F1',border:'1px solid #A8DFC0',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:13,color:'#0F2560',fontStyle:'italic'}}>
+              <div className="letras-box" style={{marginBottom:16}}>
                 {enLetras}
               </div>
             )}
@@ -677,7 +755,7 @@ export default function FormularioEgreso() {
                 </div>
               )}
               {concepto && concepto !== '__custom__' && mesAnio && (
-                <div style={{background:'#F4F8FF',border:'1px solid #C7D9FF',borderRadius:8,padding:'8px 12px',marginTop:6,fontSize:13,color:'#0F2560',fontStyle:'italic'}}>
+                <div className="letras-box" style={{marginTop:6,background:'var(--navy-soft)',borderColor:'var(--navy-line)',color:'var(--navy)'}}>
                   {concepto} {mesAnio}
                 </div>
               )}
@@ -715,7 +793,7 @@ export default function FormularioEgreso() {
                 <tbody>
                   {cuentas.map((c, i) => (
                     <tr key={i}>
-                      <td><input className="text-input-sm" value={c.codigo} onChange={e => setCuenta(i,'codigo',e.target.value)} placeholder="Ej: 5415-05"/></td>
+                      <td><input className="text-input-sm" list="puc-lista" value={c.codigo} onChange={e => cambiarCodigo(i, e.target.value)} placeholder="Ej: 5415-05"/></td>
                       <td><input className="text-input-sm" value={c.cuenta} onChange={e => setCuenta(i,'cuenta',e.target.value)} placeholder="Nombre de la cuenta"/></td>
                       <td><input className="num-input" type="text" value={c.debito ? fmt(c.debito) : ''} placeholder="0" onChange={e => setCuenta(i,'debito',e.target.value.replace(/\D/g,''))}/></td>
                       <td><input className="num-input" type="text" value={c.credito ? fmt(c.credito) : ''} placeholder="0" onChange={e => setCuenta(i,'credito',e.target.value.replace(/\D/g,''))}/></td>
@@ -723,8 +801,33 @@ export default function FormularioEgreso() {
                     </tr>
                   ))}
                 </tbody>
+                {(() => {
+                  const deb = cuentas.reduce((a, x) => a + (x.debito || 0), 0)
+                  const cre = cuentas.reduce((a, x) => a + (x.credito || 0), 0)
+                  const cuadra = deb === cre
+                  return (
+                    <tfoot>
+                      <tr className={'acc-total' + (cuadra ? '' : ' descuadre')}>
+                        <td>TOTAL</td>
+                        <td></td>
+                        <td className="acc-total-num">${fmt(deb)}</td>
+                        <td className="acc-total-num">${fmt(cre)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )
+                })()}
               </table>
             </div>
+            {(() => {
+              const deb = cuentas.reduce((a, x) => a + (x.debito || 0), 0)
+              const cre = cuentas.reduce((a, x) => a + (x.credito || 0), 0)
+              return deb === cre
+                ? <div className="fm-cuadre ok">✓ Débitos y créditos cuadran: <b>${fmt(deb)}</b></div>
+                : <div className="fm-cuadre no">Débitos <b>${fmt(deb)}</b> · Créditos <b>${fmt(cre)}</b> — aún no cuadran</div>
+            })()}
+            <CalculoRetencion cuentas={cuentas} onAplicar={(nuevas, pagado) => { setAceptoDescuadre(false); setCuentas(nuevas); setValor(fmt(pagado)) }} />
+            <ListaPUC />
           </div>
         )}
 
@@ -770,7 +873,125 @@ export default function FormularioEgreso() {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
         </div>
+        </div>
+
+        {/* Resumen del comprobante (solo muestra lo que ya se llenó) */}
+        <div className="fm-side fm-side-col">
+        <aside className="card" style={{padding:0}}>
+          <div className="card-title" style={{margin:0,padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>Resumen del comprobante</div>
+          <div className="fm-side-body">
+            <div className="fm-total">${fmt(valorNum)}</div>
+            <div className="fm-letras">{valorNum > 0 ? enLetras : 'Aún sin valor'}</div>
+            <div className="fm-row"><span>No.</span><span className="v3-mono">{numero || '—'}</span></div>
+            <div className="fm-row"><span>Fecha</span><span className="v3-mono">{fecha ? fecha.split('-').reverse().join('/') : '—'}</span></div>
+            <div className="fm-row"><span>Pagado a</span><span>{pagadoA || '—'}</span></div>
+            {docNumero && <div className="fm-row"><span>{docTipo || 'Doc.'}</span><span className="v3-mono">{docNumero}</span></div>}
+            <div className="fm-row"><span>Concepto</span><span>{conceptoFinal || '—'}</span></div>
+            <div className="fm-row"><span>Pago</span><span>{efectivo ? 'Efectivo' : 'Transferencia'}</span></div>
+          </div>
+        </aside>
+
+        {/* Soportes adjuntos (opcional) */}
+        <aside className="card" style={{padding:0}}>
+          <div className="card-title" style={{margin:0,padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>
+            Soportes <span className="sp-tag">OPCIONAL</span>
+          </div>
+          <div className="fm-side-body">
+            <ListaSoportes soportes={soportes} onQuitar={saved ? undefined : quitarSoporte} />
+            {soportes.length === 0 && soportesOk === 0 && (
+              <div className="sp-help">Puedes adjuntar la foto o el PDF de la factura o consignación. Queda guardado como soporte de este egreso.</div>
+            )}
+            {soportesOk > 0 && <div className="sp-ok">✓ {soportesOk === 1 ? '1 soporte guardado' : soportesOk + ' soportes guardados'} con el egreso</div>}
+            {soporteAviso && <div className="sp-warn">{soporteAviso}</div>}
+            {soporteError && <div className="sp-warn">{soporteError}</div>}
+            {soportes.length + soportesOk < MAX_SOPORTES && (
+              <label className="sp-add">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                {subiendo ? 'Subiendo…' : 'Adjuntar soporte'}
+                <input type="file" multiple accept="image/*,application/pdf" disabled={subiendo}
+                  onChange={e => { adjuntarSoportes(e.target.files); e.target.value = '' }} />
+              </label>
+            )}
+          </div>
+        </aside>
+        </div>
+        </div>
       </div>
+    </div>
+  )
+}
+
+// ── Lista de soportes (miniatura, nombre, peso, origen) ──
+function ListaSoportes({ soportes, onQuitar }: { soportes: ArchivoSoporte[]; onQuitar?: (i: number) => void }) {
+  const vistas = useMemo(
+    () => soportes.map(s => s.archivo.type.startsWith('image/') ? URL.createObjectURL(s.archivo) : ''),
+    [soportes])
+  useEffect(() => () => vistas.forEach(u => u && URL.revokeObjectURL(u)), [vistas])
+  if (soportes.length === 0) return null
+  return (
+    <div className="sp-list">
+      {soportes.map((s, i) => (
+        <div className="sp-item" key={i}>
+          {vistas[i]
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img className="sp-thumb" src={vistas[i]} alt="" />
+            : <div className="sp-thumb">PDF</div>}
+          <div className="sp-info">
+            <span className="sp-name" title={s.archivo.name}>{s.archivo.name}</span>
+            <span className="sp-meta">{(s.archivo.size / 1024 / 1024).toFixed(1)} MB · {s.origen === 'comprobante_ia' ? 'del comprobante' : 'adjuntado'}</span>
+          </div>
+          {onQuitar && <button className="btn-icon-x" title="Quitar" onClick={() => onQuitar(i)}>✕</button>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Retención en la fuente (Configuración → Retención) ───────────────────
+// Aparece cuando el comprobante tiene la cuenta de retención (ej. 2365-30)
+// después de una cuenta de gasto. Llena la retención en CRÉDITO y deja la
+// caja con lo que realmente se paga, para que el comprobante cuadre.
+function CalculoRetencion({ cuentas, onAplicar }: { cuentas: Cuenta[]; onAplicar: (c: Cuenta[], pagado: number) => void }) {
+  const r = leerConfig().retencion
+  const iRte = cuentas.findIndex(c => c.codigo.trim() === r.cuenta.trim())
+  const iGasto = cuentas.findIndex((c, i) => i !== iRte && /^[5-6]/.test(c.codigo.trim()))
+  const [baseTxt, setBaseTxt] = useState('')
+  if (iRte <= 0 || iGasto < 0) return null
+  const sugerida = cuentas[iGasto].debito || 0
+  const base = baseTxt ? (parseInt(baseTxt.replace(/\D/g, '')) || 0) : sugerida
+  const calc = calcularRetencion(base, r)
+  let iCaja = cuentas.findIndex(c => c.codigo.trim().startsWith('11'))
+  if (iCaja < 0) iCaja = cuentas.length - 1
+
+  function aplicar() {
+    const nuevas = cuentas.map((c, i) => i === iRte ? { ...c, debito: 0, credito: calc.valor } : c)
+    const debitos = nuevas.reduce((a, c, i) => a + (i === iCaja ? 0 : c.debito || 0), 0)
+    const otrosCreditos = nuevas.reduce((a, c, i) => a + (i === iCaja ? 0 : c.credito || 0), 0)
+    const pagado = Math.max(0, debitos - otrosCreditos)
+    nuevas[iCaja] = { ...nuevas[iCaja], debito: 0, credito: pagado }
+    onAplicar(nuevas, pagado)
+  }
+
+  return (
+    <div className="rte-box">
+      <div className="rte-head">
+        <b>Retención en la fuente</b>
+        <span>{String(r.porcentaje).replace('.', ',')} % · cuenta {r.cuenta}</span>
+      </div>
+      <div className="rte-body">
+        <label>
+          <span>Base</span>
+          <input className="num-input" value={baseTxt || (sugerida ? fmt(sugerida) : '')} placeholder="Valor del gasto"
+            onChange={e => { const n = e.target.value.replace(/\D/g, ''); setBaseTxt(n ? fmt(parseInt(n)) : '') }} />
+        </label>
+        <div className="rte-res">
+          {base === 0 ? 'Escribe primero el valor del gasto (débito).'
+            : calc.aplica ? <>Retención: <b>${fmt(calc.valor)}</b></>
+            : <>No aplica: la base es menor que <b>${fmt(calc.minimo)}</b></>}
+        </div>
+        <button type="button" className="btn btn-sm" disabled={base === 0} onClick={aplicar}>Aplicar a las cuentas</button>
+      </div>
+      <small>Pone la retención en <b>crédito</b> y deja en caja lo que realmente se paga. Puedes cambiar la base si la retención se calcula sobre otro valor.</small>
     </div>
   )
 }

@@ -4,6 +4,9 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo, traerPorIds } from '@/lib/db'
 import { cargarExcelJS } from '@/lib/excel'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { textosIglesia } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -174,48 +177,35 @@ export default function InformeIngresos() {
   // ── Gráfica SVG ───────────────────────────────────────────────────────
   function renderGrafica() {
     if (registros.length === 0) return null
-    const W = 640, H = 100, PAD = 50
-    const maxVal = Math.max(...registros.map(r => r.total))
-    const barW = Math.min(60, (W - PAD * 2) / registros.length - 8)
-
+    const FILAS = 12
+    const maxVal = Math.max(1, ...registros.map(r => r.total))
+    const unidad = maxVal / FILAS
     return (
-      <svg width="100%" viewBox={`0 0 ${W} ${H + 60}`} style={{overflow:'visible'}}>
-        {/* Grid lines */}
-        {[0.25, 0.5, 0.75, 1].map((f, i) => (
-          <g key={i}>
-            <line x1={PAD} y1={PAD + H * (1 - f)} x2={W - PAD} y2={PAD + H * (1 - f)}
-              stroke="#E8EFFD" strokeWidth="1" strokeDasharray="4 4"/>
-            <text x={PAD - 6} y={PAD + H * (1 - f) + 4} textAnchor="end"
-              fontSize="9" fill="#8A9CC0">${fmt(Math.round(maxVal * f))}</text>
-          </g>
-        ))}
-
-        {/* Barras */}
-        {registros.map((r, i) => {
-          const barH = maxVal > 0 ? (r.total / maxVal) * H : 0
-          const x = PAD + (i * (W - PAD * 2)) / registros.length + ((W - PAD * 2) / registros.length - barW) / 2
-          const y = PAD + H - barH
-          const fecha = r.fecha.split('-')
-          return (
-            <g key={r.id}>
-              <rect x={x} y={y} width={barW} height={barH} rx="4"
-                fill="#2B5BBF" opacity="0.85"/>
-              <rect x={x} y={y} width={barW} height={Math.min(barH, 4)} rx="4"
-                fill="#3B6FD4"/>
-              <text x={x + barW / 2} y={y - 6} textAnchor="middle"
-                fontSize="9" fill="#2B5BBF" fontWeight="500">
-                ${fmt(r.total)}
-              </text>
-              <text x={x + barW / 2} y={PAD + H + 16} textAnchor="middle"
-                fontSize="9" fill="#8A9CC0">
-                {fecha[2]}/{fecha[1]}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
+      <div className="ing-chart" role="img" aria-label="Evolución de ingresos por registro, separando diezmos del resto">
+        <div className="ing-axis"><span>${fmt(Math.round(maxVal))}</span><span>${fmt(Math.round(maxVal / 2))}</span><span>$0</span></div>
+        <div className="ing-plot">
+          <div className="ing-cols">
+            {registros.map(r => {
+              const dz = (r.columnas || []).filter(c => c.nombre.toLowerCase().includes('diezmo')).reduce((a, c) => a + (c.total || 0), 0)
+              const nDz = Math.round(dz / unidad)
+              const nTot = Math.min(FILAS, Math.round(r.total / unidad))
+              return (
+                <div key={r.id} className="ing-col" title={`${r.fecha.split('-').reverse().join('/')} · $${fmt(r.total)}`}>
+                  {Array.from({ length: FILAS }, (_, k) => {
+                    const fila = FILAS - 1 - k
+                    return <span key={k} className={fila < nDz ? 'on' : fila < nTot ? 'mid' : ''} />
+                  })}
+                </div>
+              )
+            })}
+          </div>
+          <div className="ing-labels">{registros.map(r => <span key={r.id}>{r.fecha.slice(8, 10)}/{r.fecha.slice(5, 7)}</span>)}</div>
+          <div className="ing-legend"><span><i />Diezmos</span><span><i className="mid" />Ofrendas y votos</span></div>
+        </div>
+      </div>
     )
   }
+
 
   // ── Excel ─────────────────────────────────────────────────────────────
   async function exportarExcel() {
@@ -235,7 +225,7 @@ export default function InformeIngresos() {
     ws1.columns = [{ width: 30 }, { width: 20 }, { width: 20 }, { width: 20 }]
 
     ws1.mergeCells('A1:D1')
-    ws1.getCell('A1').value = 'IGLESIA EN MONTERÍA'
+    ws1.getCell('A1').value = textosIglesia().MAYUS
     ws1.getCell('A1').font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 }
     ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A8F' } }
     ws1.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
@@ -441,7 +431,7 @@ export default function InformeIngresos() {
       .section{margin-bottom:16px}
       .section-title{font-size:11px;font-weight:bold;color:#1A3A8F;border-bottom:2px solid #1A3A8F;padding-bottom:4px;margin-bottom:8px}
     </style></head><body>
-    <h1>IGLESIA EN MONTERÍA</h1>
+    <h1>${textosIglesia().MAYUS}</h1>
     <h2>${titulo}</h2>
     <div class="cards">
       <div class="card"><div class="card-label">Total General</div><div class="card-value">$${fmt(totalGeneral)}</div></div>
@@ -523,7 +513,7 @@ export default function InformeIngresos() {
         </div>
       </div>
       <div class="fila">
-        <div class="campo recibido"><span class="campo-label">Recibido de:</span> Hermanos Iglesia en Montería</div>
+        <div class="campo recibido"><span class="campo-label">Recibido de:</span> Hermanos ${textosIglesia().nombre}</div>
         <div class="campo monto"><span class="campo-label" style="color:#006400">$</span> ${fmt(r.total)}</div>
       </div>
       <div class="fila"><div class="campo suma-letras"><span class="campo-label">La suma de (en letras):</span> ${numeroALetras(r.total)} <span class="campo-label">m/cte</span></div></div>
@@ -566,7 +556,7 @@ export default function InformeIngresos() {
     ws1.columns = [{ width: 20 }, { width: 30 }, { width: 18 }, { width: 18 }, { width: 25 }]
 
     ws1.mergeCells('A1:E1')
-    ws1.getCell('A1').value = 'IGLESIA EN MONTERÍA — COMPROBANTE DE INGRESO'
+    ws1.getCell('A1').value = `${textosIglesia().MAYUS} — COMPROBANTE DE INGRESO`
     ws1.getCell('A1').font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 }
     ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF006400' } }
     ws1.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
@@ -584,9 +574,9 @@ export default function InformeIngresos() {
       if (opts.numFmt) c.numFmt = opts.numFmt
     }
 
-    ws1.mergeCells('A2:B2'); setCell('A2', 'Ciudad: Montería')
+    ws1.mergeCells('A2:B2'); setCell('A2', `Ciudad: ${textosIglesia().ciudad}`)
     setCell('C2', 'Día: ' + d); setCell('D2', 'Mes: ' + m); setCell('E2', 'Año: ' + y)
-    ws1.mergeCells('A3:D3'); setCell('A3', 'Recibido de: Hermanos Iglesia en Montería')
+    ws1.mergeCells('A3:D3'); setCell('A3', `Recibido de: Hermanos ${textosIglesia().nombre}`)
     setCell('E3', r.total, { numFmt: '$#,##0', bold: true, fill: 'FFD4EDDA', font: { bold: true, color: { argb: 'FF006400' } }, align: 'right' })
     ws1.mergeCells('A4:E4'); setCell('A4', 'La suma de (en letras): ' + numeroALetras(r.total) + ' m/cte', { fill: 'FFD4EDDA', bold: true })
     ws1.mergeCells('A5:E5'); setCell('A5', 'Por concepto de: Diezmos y ofrendas')
@@ -634,7 +624,7 @@ export default function InformeIngresos() {
     ws2.columns = [{ width: 8 }, ...r.columnas.map(() => ({ width: 22 })), { width: 20 }]
 
     ws2.mergeCells(1, 1, 1, r.columnas.length + 2)
-    ws2.getCell('A1').value = 'IGLESIA EN MONTERÍA — REGISTRO DE INGRESOS'
+    ws2.getCell('A1').value = `${textosIglesia().MAYUS} — REGISTRO DE INGRESOS`
     ws2.getCell('A1').font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 13 }
     ws2.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A8F' } }
     ws2.getCell('A1').alignment = { horizontal: 'center' }
@@ -716,73 +706,7 @@ export default function InformeIngresos() {
 
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif}
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:50}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:36px;height:36px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65)}
-        .actions-bar{display:flex;gap:10px}
-        .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-pdf{background:rgba(255,255,255,.12);color:#fff}
-        .btn-pdf:hover{background:rgba(255,255,255,.22)}
-        .btn-excel{background:#2BC48A;color:#fff;box-shadow:0 3px 12px rgba(43,196,138,.3)}
-        .btn-excel:hover{background:#1A9E6E}
-        .content{max-width:1000px;margin:0 auto;padding:32px 24px}
-        .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 16px rgba(43,91,191,.08);margin-bottom:20px}
-        .card-title{font-size:12px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;margin-bottom:18px;display:flex;align-items:center;gap:8px}
-        /* Filtros */
-        .filtro-tabs{display:flex;gap:8px;margin-bottom:16px}
-        .tab{padding:8px 20px;border-radius:8px;border:1.5px solid #D8E4F8;background:#F8FAFF;color:#8A9CC0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .tab.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
-        .filtro-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-        .field{display:flex;flex-direction:column;gap:6px}
-        .label{font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase}
-        .input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s}
-        .input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-        select.input{cursor:pointer}
-        .btn-buscar{padding:10px 24px;background:#2B5BBF;color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:7px;box-shadow:0 3px 12px rgba(43,91,191,.25)}
-        .btn-buscar:hover{background:#1A3A8F}
-        /* Tarjetas resumen */
-        .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:20px}
-        .summary-card{background:#fff;border-radius:14px;padding:18px 16px;box-shadow:0 2px 12px rgba(43,91,191,.07);border:1.5px solid transparent}
-        .summary-card.main{border-color:#2B5BBF;background:linear-gradient(135deg,#1A3A8F,#2B5BBF)}
-        .s-label{font-size:10px;font-weight:500;color:#8A9CC0;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-        .s-value{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#0F2560}
-        .summary-card.main .s-label{color:rgba(255,255,255,.7)}
-        .summary-card.main .s-value{color:#fff;font-size:26px}
-        .s-sub{font-size:11px;color:#8A9CC0;margin-top:3px}
-        /* Gráfica */
-        .chart-wrap{background:#F8FAFF;border-radius:12px;padding:16px;overflow-x:auto}
-        /* Tabla */
-        .table-wrap{overflow-x:auto;border-radius:12px;border:1.5px solid #D8E4F8}
-        table{width:100%;border-collapse:collapse}
-        thead tr{background:#EEF4FF}
-        th{padding:11px 14px;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
-        td{padding:10px 14px;font-size:13px;color:#0F2560;border-bottom:1px solid #F0F5FF}
-        tbody tr:last-child td{border-bottom:none}
-        tbody tr:hover{background:#FAFCFF}
-        tfoot td{padding:11px 14px;font-weight:500;color:#1A3A8F;background:#EEF4FF;border-top:1.5px solid #D8E4F8}
-        .num{text-align:right;font-variant-numeric:tabular-nums}
-        /* Distribución */
-        .dist-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
-        .dist-card{background:#F8FAFF;border-radius:12px;padding:14px 16px;border:1.5px solid #E8EFFD}
-        .dist-concepto{font-size:12px;font-weight:500;color:#0F2560;margin-bottom:4px}
-        .dist-monto{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#2B5BBF}
-        /* Letras */
-        .letras-box{background:#E8F8F1;border:1px solid #A8DFC0;border-radius:10px;padding:12px 16px;font-size:13px;color:#0F2560;font-style:italic;margin-bottom:20px}
-        /* Variación */
-        .var-pos{color:#1A7A4A;font-weight:500;font-size:12px}
-        .var-neg{color:#C0392B;font-weight:500;font-size:12px}
-        /* Empty */
-        .empty{text-align:center;padding:48px 24px;color:#8A9CC0}
-        .empty svg{margin:0 auto 12px;display:block;opacity:.4}
-        @media(max-width:600px){.content{padding:16px}.filtro-row{flex-direction:column}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Header */}
       <div className="top-bar">
@@ -792,7 +716,7 @@ export default function InformeIngresos() {
           </button>
           <div>
             <div className="top-title">Informe de Ingresos</div>
-            <div className="top-subtitle">Iglesia en Montería</div>
+            <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
         {buscado && registros.length > 0 && (
@@ -869,7 +793,7 @@ export default function InformeIngresos() {
             <div className="summary-card main">
               <div className="s-label">Total General</div>
               <div className="s-value">${fmt(totalGeneral)}</div>
-              <div className="s-sub" style={{color:'rgba(255,255,255,.6)'}}>{periodoLabel}</div>
+              <div className="s-sub">{periodoLabel}</div>
             </div>
             {colsConsolidadas.map(c => (
               <div key={c.nombre} className="summary-card">
@@ -882,7 +806,7 @@ export default function InformeIngresos() {
               <div className="summary-card">
                 <div className="s-label">Variación</div>
                 <div className={`s-value ${parseFloat(variacion) >= 0 ? 'var-pos' : 'var-neg'}`} style={{fontSize:22}}>
-                  {parseFloat(variacion) >= 0 ? '↑' : '↓'} {Math.abs(parseFloat(variacion))}%
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{display:"inline-block", verticalAlign: -1, marginRight: 3 }}><path d={parseFloat(variacion) >= 0 ? 'M12 19V5M5 12l7-7 7 7' : 'M12 5v14M19 12l-7 7-7-7'} /></svg>{Math.abs(parseFloat(variacion))}%
                 </div>
                 <div className="s-sub">Primer vs último registro</div>
               </div>
@@ -921,21 +845,19 @@ export default function InformeIngresos() {
                 <tbody>
                   {registros.map((r, i) => (
                     <tr key={r.id}>
-                      <td style={{color:'#8A9CC0',fontSize:12}}>{i+1}</td>
+                      <td className="v3-mono" style={{color:'var(--muted)'}}>{i+1}</td>
                       <td>{r.fecha.split('-').reverse().join('/')}</td>
                       {colsConsolidadas.map(col => {
                         const found = r.columnas.find(c => c.nombre === col.nombre)
                         return <td key={col.nombre} className="num">${fmt(found?.total || 0)}</td>
                       })}
-                      <td className="num" style={{fontWeight:600,color:'#1A3A8F'}}>${fmt(r.total)}</td>
+                      <td className="num v3-mono" style={{fontWeight:600}}>${fmt(r.total)}</td>
                       <td>
                         <div style={{display:'flex',gap:6,justifyContent:'center'}}>
                           <button
                             title="Descargar comprobante PDF"
                             onClick={() => generarComprobantePDF(r)}
-                            style={{padding:'4px 8px',background:'#EEF4FF',color:'#2B5BBF',border:'1.5px solid #C7D9FF',borderRadius:7,cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',gap:4,fontFamily:'DM Sans,sans-serif',fontWeight:500,transition:'all .2s'}}
-                            onMouseEnter={e => {(e.currentTarget as HTMLButtonElement).style.background='#2B5BBF';(e.currentTarget as HTMLButtonElement).style.color='#fff'}}
-                            onMouseLeave={e => {(e.currentTarget as HTMLButtonElement).style.background='#EEF4FF';(e.currentTarget as HTMLButtonElement).style.color='#2B5BBF'}}
+                            className="btn btn-sm"
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                             PDF
@@ -943,9 +865,7 @@ export default function InformeIngresos() {
                           <button
                             title="Descargar Excel"
                             onClick={() => generarExcelRegistro(r)}
-                            style={{padding:'4px 8px',background:'#E8F8F1',color:'#1A7A4A',border:'1.5px solid #A8DFC0',borderRadius:7,cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',gap:4,fontFamily:'DM Sans,sans-serif',fontWeight:500,transition:'all .2s'}}
-                            onMouseEnter={e => {(e.currentTarget as HTMLButtonElement).style.background='#2BC48A';(e.currentTarget as HTMLButtonElement).style.color='#fff'}}
-                            onMouseLeave={e => {(e.currentTarget as HTMLButtonElement).style.background='#E8F8F1';(e.currentTarget as HTMLButtonElement).style.color='#1A7A4A'}}
+                            className="btn btn-sm"
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
                             Excel
@@ -960,7 +880,7 @@ export default function InformeIngresos() {
                     <td></td>
                     <td style={{fontWeight:600}}>TOTAL</td>
                     {colsConsolidadas.map(c => <td key={c.nombre} className="num">${fmt(c.total)}</td>)}
-                    <td className="num" style={{color:'#1A3A8F',fontWeight:700}}>${fmt(totalGeneral)}</td>
+                    <td className="num" style={{color:'var(--navy)'}}>${fmt(totalGeneral)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -981,9 +901,9 @@ export default function InformeIngresos() {
                     <div className="dist-monto">${fmt(monto)}</div>
                   </div>
                 ))}
-                <div className="dist-card" style={{borderColor: saldo >= 0 ? '#A8DFC0' : '#FBBCBC', background: saldo >= 0 ? '#E8F8F1' : '#FEE8E8'}}>
+                <div className="dist-card" style={{borderColor: saldo >= 0 ? 'var(--navy)' : '#F1D3CF', background: saldo >= 0 ? 'var(--navy-soft)' : 'var(--danger-soft)'}}>
                   <div className="dist-concepto">Saldo restante</div>
-                  <div className="dist-monto" style={{color: saldo >= 0 ? '#1A7A4A' : '#C0392B'}}>${fmt(saldo)}</div>
+                  <div className="dist-monto" style={{color: saldo >= 0 ? 'var(--navy)' : 'var(--danger)'}}>${fmt(saldo)}</div>
                 </div>
               </div>
             </div>
@@ -994,3 +914,27 @@ export default function InformeIngresos() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.content > .card{padding:14px}
+.content > .card > .card-title{margin:-14px -14px 14px;padding:10px 14px;border-bottom:1px solid var(--line-2)}
+.content > .card > .table-wrap{margin:0 -14px -14px}
+.content > .card > .dist-grid{padding:0}
+.filtro-tabs{margin-bottom:12px}
+.filtro-row .field{min-width:150px}
+table{min-width:720px}
+.ing-chart{display:flex;gap:10px}
+.ing-axis{display:flex;flex-direction:column;justify-content:space-between;height:170px;width:84px;font:400 11px var(--mono);color:var(--muted);text-align:right}
+.ing-plot{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.ing-cols{display:flex;gap:8px;height:170px;align-items:stretch}
+.ing-col{flex:1 1 0;min-width:8px;max-width:64px;display:flex;flex-direction:column;gap:3px}
+.ing-col span{flex:1 1 0;border-radius:2px;background:var(--empty)}
+.ing-col span.on{background:var(--navy)}
+.ing-col span.mid{background:var(--navy-mid)}
+.ing-labels{display:flex;gap:8px;font:400 11px var(--mono);color:var(--muted)}
+.ing-labels span{flex:1 1 0;max-width:64px;text-align:center}
+.ing-legend{display:flex;gap:16px;font:400 11px var(--mono);color:var(--muted);text-transform:uppercase}
+.ing-legend span{display:inline-flex;align-items:center;gap:6px}
+.ing-legend i{width:8px;height:8px;border-radius:2px;background:var(--navy)}
+.ing-legend i.mid{background:var(--navy-mid)}
+`

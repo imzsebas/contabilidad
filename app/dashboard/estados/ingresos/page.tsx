@@ -1,10 +1,13 @@
 "use client"
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { BASE_V3 } from '@/lib/estilosV3'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { verificarClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
 import { traerPorIds, traerTodo } from '@/lib/db'
+import { textosIglesia } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -33,7 +36,6 @@ const MESES_NOM: Record<string,string> = {
   '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
   '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE',
 }
-const NIT_IGLESIA = '900.381.680-7'
 
 function fmt(n: number) { return n.toLocaleString('es-CO') }
 
@@ -145,6 +147,8 @@ export default function EstadoIngresosPage() {
   const [añoSel,  setAñoSel]  = useState('')
   const [mesSel,  setMesSel]  = useState('01')
   const [grupos,  setGrupos]  = useState<GrupoFecha[]>([])
+  // Paginación: cada página muestra UN ingreso (income_record) completo
+  const [paginaIngreso, setPaginaIngreso] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
 
@@ -272,7 +276,7 @@ export default function EstadoIngresosPage() {
         // Fila Iglesia
         porFecha[fecha].filas.push({
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
-          nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
+          nombre: textosIglesia().MAYUS_SIN, ccNit: textosIglesia().nit,
           descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
           recordId: rec.id, columnId: null,
         })
@@ -615,7 +619,7 @@ export default function EstadoIngresosPage() {
         { width: 22 }, { width: 16 }, { width: 5 },
       ]
 
-      ws.mergeCells('A1:K1'); titulo(ws.getCell('A1'), 'IGLESIA EN MONTERIA');      ws.getRow(1).height = 18
+      ws.mergeCells('A1:K1'); titulo(ws.getCell('A1'), textosIglesia().MAYUS_SIN);      ws.getRow(1).height = 18
       ws.mergeCells('A2:K2'); titulo(ws.getCell('A2'), 'LIBRO DIARIO GENERAL');     ws.getRow(2).height = 16
       ws.mergeCells('A3:K3'); titulo(ws.getCell('A3'), `${mesNom} DEL ${añoSel}`); ws.getRow(3).height = 16
       ws.getRow(4).height = 6
@@ -632,7 +636,7 @@ export default function EstadoIngresosPage() {
         if (!porFecha[fecha]) porFecha[fecha] = { fecha, filas: [] }
         porFecha[fecha].filas.push({
           tc: 1, fecha, cuenta: 1105, sc: 5, aux: '',
-          nombre: 'IGLESIA  EN MONTERIA', ccNit: NIT_IGLESIA,
+          nombre: textosIglesia().MAYUS_SIN, ccNit: textosIglesia().nit,
           descripcion: 'DIEZMOS Y OFRENDAS', valor: rec.total, e: '', esIglesia: true, rowId: null,
           recordId: rec.id, columnId: null,
         })
@@ -696,113 +700,24 @@ export default function EstadoIngresosPage() {
   // ── Render ────────────────────────────────────────────────────────────────
   const totalMes = grupos.flatMap(g => g.filas).filter(f => f.esIglesia).reduce((a, f) => a + f.valor, 0)
 
+  // ── Paginación por ingreso (solo cambia qué se muestra; los datos no se tocan) ──
+  const ingresosDelMes = useMemo(() => {
+    const lista: { recordId: number; fecha: string; total: number; registros: number }[] = []
+    grupos.forEach(g => g.filas.forEach(f => {
+      if (f.esIglesia) lista.push({ recordId: f.recordId, fecha: g.fecha, total: f.valor, registros: 0 })
+    }))
+    lista.forEach(it => {
+      it.registros = grupos.reduce((a, g) => a + g.filas.filter(f => !f.esIglesia && f.recordId === it.recordId).length, 0)
+    })
+    return lista
+  }, [grupos])
+  useEffect(() => { setPaginaIngreso(0) }, [mesSel, añoSel])
+  const paginaActual = Math.min(paginaIngreso, Math.max(0, ingresosDelMes.length - 1))
+  const ingresoActual = ingresosDelMes[paginaActual]
+
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif;display:flex;flex-direction:column}
-
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:68px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;box-shadow:0 2px 20px rgba(26,58,143,.25)}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:38px;height:38px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65);margin-top:1px}
-
-        .content{flex:1;padding:28px 32px}
-
-        .tabs-años{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:0}
-        .tab-año{padding:8px 22px;border:none;border-radius:10px 10px 0 0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;background:#D8E4F8;color:#4A6090;transition:all .2s}
-        .tab-año.active{background:#fff;color:#1A3A8F;font-weight:700;box-shadow:0 -2px 0 #2B5BBF inset}
-        .tab-año:hover:not(.active){background:#C7D9FF}
-
-        .tabs-meses-wrap{background:#fff;display:flex;overflow-x:auto;border-bottom:1.5px solid #D8E4F8}
-        .tab-mes{padding:11px 18px;border:none;border-bottom:2.5px solid transparent;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;background:none;color:#8A9CC0;transition:all .2s;white-space:nowrap;letter-spacing:.05em}
-        .tab-mes.active{color:#2B5BBF;border-bottom-color:#2B5BBF;font-weight:700}
-        .tab-mes:hover:not(.active){color:#2B5BBF;background:#F0F5FF}
-
-        .card{background:#fff;border-radius:0 0 16px 16px;box-shadow:0 4px 24px rgba(43,91,191,.08);overflow:hidden}
-
-        .info-bar{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1.5px solid #EEF4FF;flex-wrap:wrap;gap:12px}
-        .info-titulo{font-family:'Playfair Display',serif;font-size:15px;color:#0F2560;font-weight:700}
-        .info-total{font-size:12px;color:#4A6090;margin-top:3px}
-        .info-total strong{color:#1A7A4A;font-size:14px}
-        .btn-excel{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #A8DFC0;background:#E8F8F1;color:#1A7A4A;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-excel:hover{background:#A8DFC0}
-        .btn-excel:disabled{opacity:.5;cursor:not-allowed}
-
-        .btn-modificar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #C7D9FF;background:#EEF4FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-modificar:hover{background:#C7D9FF}
-        .btn-modificar.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
-        .btn-modificar:disabled{opacity:.5;cursor:not-allowed}
-
-        .btn-eliminar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #FBBCBC;background:#FEE8E8;color:#C0392B;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-eliminar:hover{background:#FBBCBC}
-        .btn-eliminar:disabled{opacity:.5;cursor:not-allowed}
-        .btn-cancelar-sel{display:inline-flex;align-items:center;padding:9px 14px;border-radius:10px;border:1.5px solid #D8E4F8;background:#fff;color:#4A6090;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-cancelar-sel:hover{background:#F0F5FF}
-        .btn-cancelar-sel:disabled{opacity:.5;cursor:not-allowed}
-
-        .row-checkbox{width:15px;height:15px;accent-color:#C0392B;cursor:pointer}
-        .btn-add-row{width:20px;height:20px;border-radius:6px;border:1.5px solid #A8DFC0;background:#E8F8F1;color:#1A7A4A;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;padding:0}
-        .btn-add-row:hover{background:#A8DFC0}
-
-        .modal-field-label{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#4A6090;margin-bottom:5px}
-
-        .edit-valor-input{width:100px;padding:6px 9px;border:1.5px solid #C7D9FF;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s;text-align:right}
-        .edit-valor-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 2px rgba(43,91,191,.15);background:#fff}
-        .edit-valor-input:disabled{opacity:.6}
-
-        .edit-banner{margin:14px 24px 0;padding:10px 14px;background:#EEF4FF;border:1.5px solid #C7D9FF;color:#1A3A8F;border-radius:10px;font-size:12px}
-
-        .edit-nombre-input{width:100%;padding:6px 9px;border:1.5px solid #C7D9FF;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
-        .edit-nombre-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 2px rgba(43,91,191,.15);background:#fff}
-        .edit-nombre-input:disabled{opacity:.6}
-
-        .autocomplete-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D8E4F8;border-radius:10px;box-shadow:0 8px 24px rgba(43,91,191,.15);z-index:200;overflow:hidden;text-align:left}
-        .autocomplete-item{width:100%;background:none;border:none;padding:8px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;transition:background .15s;font-family:'DM Sans',sans-serif}
-        .autocomplete-item:hover{background:#EEF4FF}
-        .autocomplete-nombre{font-size:12px;font-weight:500;color:#0F2560}
-        .autocomplete-cedula{font-size:10px;color:#8A9CC0}
-
-        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
-        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
-        .modal-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#0F2560;margin-bottom:6px}
-        .modal-sub{font-size:12px;color:#8A9CC0;margin-bottom:16px}
-        .modal-input{width:100%;padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;margin-bottom:10px}
-        .modal-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-        .modal-error{font-size:12px;color:#C0392B;margin:-2px 0 10px}
-        .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
-        .btn-modal-primary{background:#2B5BBF;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
-        .btn-modal-primary:hover{background:#1A3A8F}
-        .btn-modal-danger{background:#C0392B;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
-        .btn-modal-danger:hover{background:#A5291D}
-        .btn-modal-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
-        .btn-modal-ghost:hover{background:#F0F5FF}
-
-        .table-wrap{overflow-x:auto}
-        table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
-        thead tr{background:#F0F5FF}
-        th{padding:10px 10px;font-size:10px;font-weight:600;color:#4A6090;letter-spacing:.06em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap;text-align:center}
-        td{padding:7px 10px;border-bottom:1px solid #F5F8FF;vertical-align:middle;color:#0F2560;font-size:12px}
-        .tr-iglesia td{background:#F4FBF6;font-weight:600;color:#1A7A4A;border-top:1px solid #D4F1E4;border-bottom:1px solid #D4F1E4}
-        .tr-sep td{height:10px;background:#F8FAFF;border:none}
-        tbody tr:hover:not(.tr-iglesia):not(.tr-sep){background:#FAFCFF}
-        .cc{text-align:center}
-        .cr{text-align:right}
-        .cl{text-align:left}
-        .val-ig{color:#1A7A4A;font-weight:700}
-        .ecr{color:#2B5BBF;font-weight:600;font-size:11px}
-
-        .empty{text-align:center;padding:60px 20px;color:#8A9CC0;font-size:14px}
-        .load-wrap{text-align:center;padding:60px 20px;color:#8A9CC0}
-        .spinner{width:30px;height:30px;border:3px solid #D8E4F8;border-top-color:#2B5BBF;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .err{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;margin:16px 24px}
-
-        @media(max-width:768px){.content{padding:16px 12px}.top-bar{padding:0 16px}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar */}
       <div className="top-bar">
@@ -812,7 +727,7 @@ export default function EstadoIngresosPage() {
           </button>
           <div>
             <div className="top-title">Estado de Ingresos</div>
-            <div className="top-subtitle">Iglesia en Montería — Libro Diario General</div>
+            <div className="top-subtitle"><NombreIglesia /> — Libro Diario General</div>
           </div>
         </div>
       </div>
@@ -873,7 +788,7 @@ export default function EstadoIngresosPage() {
           {errorFila && <div className="err">{errorFila}</div>}
           {modoEdicion && !loading && grupos.length > 0 && (
             <div className="edit-banner">
-              Modo Modificar activo: clic en un nombre para reasignarlo, en un valor para corregirlo, marca la casilla de una fila para eliminarla, o usa el <strong>+</strong> junto a IGLESIA EN MONTERIA para agregar una ofrenda omitida ese día.
+              Modo Modificar activo: clic en un nombre para reasignarlo, en un valor para corregirlo, marca la casilla de una fila para eliminarla, o usa el <strong>+</strong> junto a <NombreIglesia forma="MAYUS_SIN" /> para agregar una ofrenda omitida ese día.
             </div>
           )}
 
@@ -882,6 +797,27 @@ export default function EstadoIngresosPage() {
           ) : grupos.length === 0 ? (
             <div className="empty">No hay registros para {MESES_NOM[mesSel]} {añoSel}</div>
           ) : (
+            <>
+            {ingresoActual && (
+              <div className="pag-bar">
+                <div className="pag-info">
+                  <button type="button" className="pag-arrow" aria-label="Ingreso anterior" disabled={paginaActual === 0} onClick={() => setPaginaIngreso(paginaActual - 1)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m15 6-6 6 6 6"/></svg>
+                  </button>
+                  <span>Ingreso <b>{paginaActual + 1} de {ingresosDelMes.length}</b> · <b className="f">{ingresoActual.fecha.split('-').reverse().join('/')}</b> · <b className="t">${fmt(ingresoActual.total)}</b> · {ingresoActual.registros} registros</span>
+                  <button type="button" className="pag-arrow" aria-label="Ingreso siguiente" disabled={paginaActual >= ingresosDelMes.length - 1} onClick={() => setPaginaIngreso(paginaActual + 1)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 6 6 6-6 6"/></svg>
+                  </button>
+                </div>
+                <div className="pag-chips" role="group" aria-label="Ingresos del mes">
+                  {ingresosDelMes.map((it, i) => (
+                    <button key={it.recordId} type="button" className={`pag-chip ${i === paginaActual ? 'on' : ''}`} onClick={() => setPaginaIngreso(i)}>
+                      <span>{it.fecha.slice(8, 10)}/{it.fecha.slice(5, 7)}</span><span className="m">${fmt(it.total)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="table-wrap">
               <table>
                 <thead>
@@ -895,9 +831,9 @@ export default function EstadoIngresosPage() {
                   </tr>
                 </thead>
                 <tbody>
-                                    {grupos.map((g, gi) => (
+                  {grupos.map((g, gi) => (
                     <React.Fragment key={gi}>
-                      {g.filas.map((f, fi) => (
+                      {g.filas.filter(f => !ingresoActual || f.recordId === ingresoActual.recordId).map((f, fi) => (
                         <tr key={`${gi}-${fi}`} className={f.esIglesia ? 'tr-iglesia' : ''}>
                           <td className="cc">
                             {modoEdicion && f.esIglesia && (
@@ -950,14 +886,21 @@ export default function EstadoIngresosPage() {
                           <td className={`cc ${!f.esIglesia ? 'ecr' : ''}`}>{f.e}</td>
                         </tr>
                       ))}
-                      {gi < grupos.length - 1 && (
-                        <tr className="tr-sep"><td colSpan={12}></td></tr>
-                      )}
                     </React.Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
+            {ingresoActual && (
+              <div className="pag-foot">
+                <span>INGRESO {paginaActual + 1} DE {ingresosDelMes.length} · {MESES_NOM[mesSel]} {añoSel}</span>
+                <div>
+                  <button type="button" className="btn" disabled={paginaActual === 0} onClick={() => setPaginaIngreso(paginaActual - 1)}>← Anterior</button>
+                  <button type="button" className="btn" disabled={paginaActual >= ingresosDelMes.length - 1} onClick={() => setPaginaIngreso(paginaActual + 1)}>Siguiente →</button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       </div>
@@ -1061,3 +1004,21 @@ export default function EstadoIngresosPage() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.pag-bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line-2);background:var(--fill)}
+.pag-info{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.pag-info b{font:600 13px var(--mono);color:var(--text)}
+.pag-info b.t{color:var(--navy)}
+.pag-info b.f{font-weight:400}
+.pag-arrow{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--text-2);cursor:pointer}
+.pag-arrow:disabled{opacity:.4;cursor:not-allowed}
+.pag-chips{display:flex;flex-wrap:wrap;gap:6px}
+.pag-chip{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:400 12px var(--mono);color:var(--text);cursor:pointer}
+.pag-chip .m{opacity:.75}
+.pag-chip.on{background:var(--navy);border-color:var(--navy);color:#fff}
+.pag-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;font:400 12px var(--mono);color:var(--muted)}
+.pag-foot div{display:flex;gap:6px}
+.pag-foot .btn{height:30px;font-size:12px}
+table{min-width:960px}
+`

@@ -5,6 +5,9 @@ import { supabase } from '@/lib/supabase'
 import { traerTodo, traerPorIds } from '@/lib/db'
 import { verificarClave } from '@/lib/clave'
 import { cargarExcelJS } from '@/lib/excel'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { textosIglesia } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface FilaLibro {
@@ -263,8 +266,8 @@ export default function EstadoEgresosPage() {
               cuenta,
               sc,
               aux:         '',
-              nombre:      'IGLESIA EN MONTERIA',
-              ccNit:       '900.381.680-7',
+              nombre:      textosIglesia().MAYUS_SIN,
+              ccNit:       textosIglesia().nit,
               descripcion: rec.concepto || '',
               valor:       acc.debito,
               e:           'CR',
@@ -286,8 +289,8 @@ export default function EstadoEgresosPage() {
               cuenta,
               sc,
               aux:         '',
-              nombre:      'IGLESIA EN MONTERIA',
-              ccNit:       '900.381.680-7',
+              nombre:      textosIglesia().MAYUS_SIN,
+              ccNit:       textosIglesia().nit,
               descripcion: rec.concepto || '',
               valor:       acc.credito,
               e:           'CR',
@@ -459,7 +462,7 @@ export default function EstadoEgresosPage() {
         { width: 22 }, { width: 16 }, { width: 5 },
       ]
 
-      ws.mergeCells('A1:K1'); titulo(ws.getCell('A1'), 'IGLESIA EN MONTERIA');       ws.getRow(1).height = 18
+      ws.mergeCells('A1:K1'); titulo(ws.getCell('A1'), textosIglesia().MAYUS_SIN);       ws.getRow(1).height = 18
       ws.mergeCells('A2:K2'); titulo(ws.getCell('A2'), 'LIBRO DIARIO GENERAL');      ws.getRow(2).height = 16
       ws.mergeCells('A3:K3'); titulo(ws.getCell('A3'), `${mesNom} DEL ${añoSel}`);  ws.getRow(3).height = 16
       ws.getRow(4).height = 6
@@ -483,7 +486,7 @@ export default function EstadoEgresosPage() {
           const esPpal    = idx === 0
           const ccNit     = idx === 0
             ? (rec.doc_tipo && rec.doc_numero ? rec.doc_numero : '')
-            : '900.381.680-7'
+            : textosIglesia().nit
 
           const r = ws.getRow(rn); r.height = 14
           dato(r.getCell(1),  2,                    'center')
@@ -522,95 +525,17 @@ export default function EstadoEgresosPage() {
     return sum + debitos
   }, 0)
 
+  // ── Resumen del mes (solo lectura, calculado con las mismas filas de la tabla) ──
+  const filasMes = grupos.flatMap(g => g.filas)
+  const sumaDebitos  = filasMes.filter(f => f.campoValor === 'debito').reduce((a, f) => a + (f.valor || 0), 0)
+  const sumaCreditos = filasMes.filter(f => f.campoValor === 'credito').reduce((a, f) => a + (f.valor || 0), 0)
+  const principales  = filasMes.filter(f => f.esPrincipal)
+  const mayorEgreso  = principales.reduce<FilaLibro | null>((m, f) => (!m || f.valor > m.valor ? f : m), null)
+  const numeros      = grupos.map(g => g.numero).filter((n): n is number => n !== null && n !== undefined)
+
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif;display:flex;flex-direction:column}
-
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:68px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;box-shadow:0 2px 20px rgba(26,58,143,.25)}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:38px;height:38px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65);margin-top:1px}
-
-        .content{flex:1;padding:28px 32px}
-
-        .tabs-años{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:0}
-        .tab-año{padding:8px 22px;border:none;border-radius:10px 10px 0 0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;background:#D8E4F8;color:#4A6090;transition:all .2s}
-        .tab-año.active{background:#fff;color:#1A3A8F;font-weight:700;box-shadow:0 -2px 0 #2B5BBF inset}
-        .tab-año:hover:not(.active){background:#C7D9FF}
-
-        .tabs-meses-wrap{background:#fff;display:flex;overflow-x:auto;border-bottom:1.5px solid #D8E4F8}
-        .tab-mes{padding:11px 18px;border:none;border-bottom:2.5px solid transparent;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;background:none;color:#8A9CC0;transition:all .2s;white-space:nowrap;letter-spacing:.05em}
-        .tab-mes.active{color:#C0392B;border-bottom-color:#C0392B;font-weight:700}
-        .tab-mes:hover:not(.active){color:#C0392B;background:#FFF5F5}
-
-        .card{background:#fff;border-radius:0 0 16px 16px;box-shadow:0 4px 24px rgba(43,91,191,.08);overflow:hidden}
-
-        .info-bar{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1.5px solid #EEF4FF;flex-wrap:wrap;gap:12px}
-        .info-titulo{font-family:'Playfair Display',serif;font-size:15px;color:#0F2560;font-weight:700}
-        .info-total{font-size:12px;color:#4A6090;margin-top:3px}
-        .info-total strong{color:#C0392B;font-size:14px}
-        .btn-excel{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #FBBCBC;background:#FEE8E8;color:#C0392B;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-excel:hover{background:#FBBCBC}
-        .btn-excel:disabled{opacity:.5;cursor:not-allowed}
-
-        .btn-actualizar{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:1.5px solid #FBBCBC;background:#FFF5F5;color:#C0392B;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-actualizar:hover{background:#FBBCBC}
-        .btn-actualizar.active{background:#C0392B;color:#fff;border-color:#C0392B}
-        .btn-actualizar:disabled{opacity:.5;cursor:not-allowed}
-
-        .edit-banner{margin:14px 24px 0;padding:10px 14px;background:#FFF5F5;border:1.5px solid #FBBCBC;color:#8A2E2E;border-radius:10px;font-size:12px}
-
-        .valor-editable, .desc-editable{cursor:pointer;border-bottom:1px dashed transparent;padding-bottom:1px}
-        .valor-editable:hover, .desc-editable:hover{border-bottom-color:#C0392B}
-        .edit-valor-input{width:100%;padding:6px 9px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;text-align:right;transition:border .2s}
-        .edit-valor-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
-        .edit-desc-input{width:100%;padding:6px 9px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
-        .edit-desc-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
-        .edit-fecha-input{padding:5px 8px;border:1.5px solid #FBBCBC;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:12px;color:#0F2560;outline:none;background:#FAFCFF;transition:border .2s}
-        .edit-fecha-input:focus{border-color:#C0392B;box-shadow:0 0 0 2px rgba(192,57,43,.15);background:#fff}
-
-        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
-        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:380px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
-        .modal-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#0F2560;margin-bottom:6px}
-        .modal-sub{font-size:12px;color:#8A9CC0;margin-bottom:16px}
-        .modal-input{width:100%;padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;margin-bottom:10px}
-        .modal-input:focus{border-color:#C0392B;box-shadow:0 0 0 3px rgba(192,57,43,.1)}
-        .modal-error{font-size:12px;color:#C0392B;margin:-2px 0 10px}
-        .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
-        .btn-modal-primary{background:#C0392B;color:#fff;border:none;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
-        .btn-modal-primary:hover{background:#9E2D20}
-        .btn-modal-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8;border-radius:10px;padding:9px 18px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer}
-        .btn-modal-ghost:hover{background:#F0F5FF}
-
-        .table-wrap{overflow-x:auto}
-        table{width:100%;border-collapse:collapse;font-size:12px;min-width:960px}
-        thead tr{background:#FFF5F5}
-        th{padding:10px 10px;font-size:10px;font-weight:600;color:#8A4A4A;letter-spacing:.06em;text-transform:uppercase;border-bottom:1.5px solid #FBBCBC;white-space:nowrap;text-align:center}
-        td{padding:7px 10px;border-bottom:1px solid #FFF5F5;vertical-align:middle;color:#0F2560;font-size:12px}
-        .tr-principal td{background:#FFF0F0;font-weight:600;color:#C0392B;border-top:1px solid #FBBCBC;border-bottom:1px solid #FBBCBC}
-        .tr-sep td{height:10px;background:#F8FAFF;border:none}
-        tbody tr:hover:not(.tr-principal):not(.tr-sep){background:#FFFAFA}
-        .cc{text-align:center}
-        .cr{text-align:right}
-        .cl{text-align:left}
-        .val-ppal{color:#C0392B;font-weight:700}
-        .ecr{color:#2B5BBF;font-weight:600;font-size:11px}
-
-        .empty{text-align:center;padding:60px 20px;color:#8A9CC0;font-size:14px}
-        .load-wrap{text-align:center;padding:60px 20px;color:#8A9CC0}
-        .spinner{width:30px;height:30px;border:3px solid #FBBCBC;border-top-color:#C0392B;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 12px}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .err{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;margin:16px 24px}
-        .td-desc{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
-        .td-desc:hover{overflow:visible;white-space:normal;background:#fff;position:relative;z-index:10}
-
-        @media(max-width:768px){.content{padding:16px 12px}.top-bar{padding:0 16px}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar */}
       <div className="top-bar">
@@ -620,7 +545,7 @@ export default function EstadoEgresosPage() {
           </button>
           <div>
             <div className="top-title">Estado de Egresos</div>
-            <div className="top-subtitle">Iglesia en Montería — Libro Diario General</div>
+            <div className="top-subtitle"><NombreIglesia /> — Libro Diario General</div>
           </div>
         </div>
       </div>
@@ -644,6 +569,16 @@ export default function EstadoEgresosPage() {
             </button>
           ))}
         </div>
+
+        {/* Resumen del mes */}
+        {!loading && grupos.length > 0 && (
+          <div className="v3-kpis">
+            <div className="v3-kpi navy"><div className="v3-kpi-body"><div><p className="v3-lbl">Total egresos del mes</p><p className="v3-kpi-val">${fmt(totalMes)}</p></div></div><div className="v3-kpi-foot"><span>{MESES_NOM[mesSel]} {añoSel}</span></div></div>
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Comprobantes</p><p className="v3-kpi-val">{grupos.length}</p></div></div><div className="v3-kpi-foot"><span>{numeros.length ? `No. ${Math.min(...numeros)} a ${Math.max(...numeros)}` : 'Sin número'}</span></div></div>
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Mayor egreso</p><p className="v3-kpi-val">${fmt(mayorEgreso?.valor || 0)}</p></div></div><div className="v3-kpi-foot"><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{mayorEgreso?.nombre || '—'}</span><b>{totalMes > 0 && mayorEgreso ? `${((mayorEgreso.valor / totalMes) * 100).toFixed(1)} %` : ''}</b></div></div>
+            <div className="v3-kpi"><div className="v3-kpi-body"><div><p className="v3-lbl">Débitos = créditos</p><p className="v3-kpi-val" style={{color: sumaDebitos === sumaCreditos ? 'var(--navy)' : 'var(--danger)'}}>{sumaDebitos === sumaCreditos ? '✓ Cuadrado' : 'Descuadrado'}</p></div></div><div className="v3-kpi-foot"><span>Déb. ${fmt(sumaDebitos)}</span><b>Créd. ${fmt(sumaCreditos)}</b></div></div>
+          </div>
+        )}
 
         {/* Card tabla */}
         <div className="card">
@@ -692,7 +627,7 @@ export default function EstadoEgresosPage() {
                   {grupos.map((g, gi) => (
                     <React.Fragment key={gi}>
                       {g.filas.map((f, fi) => (
-                        <tr key={`${gi}-${fi}`} className={f.esPrincipal ? 'tr-principal' : ''}>
+                        <tr key={`${gi}-${fi}`} className={f.esPrincipal ? 'tr-principal' : 'tr-contra'}>
                           <td className="cc">{f.tc}</td>
                           <td className="cc">{fi === 0 ? (g.numero ?? '') : ''}</td>
                           <td className="cc">
@@ -768,3 +703,8 @@ export default function EstadoEgresosPage() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+table{min-width:960px}
+.v3-kpi-val{font-size:20px}
+`

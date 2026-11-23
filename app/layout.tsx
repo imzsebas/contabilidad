@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { SCRIPT_TEMA } from "@/lib/tema";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,7 +27,13 @@ export default function RootLayout({
     <html
       lang="es"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-tema="oscuro"
+      suppressHydrationWarning
     >
+      <head>
+        {/* Aplica el modo claro u oscuro guardado antes de pintar la página */}
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_TEMA }} />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

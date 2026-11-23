@@ -4,6 +4,11 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo, traerPorIds } from '@/lib/db'
 import { cargarExcelJS } from '@/lib/excel'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { contarSoportes } from '@/lib/soportes'
+import VerSoportes from '@/components/VerSoportes'
+import { textosIglesia } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number) { return n.toLocaleString('es-CO') }
@@ -89,6 +94,8 @@ export default function InformeEgresos() {
   const [egresos,    setEgresos]    = useState<Egreso[]>([])
   const [loading,    setLoading]    = useState(false)
   const [buscado,    setBuscado]    = useState(false)
+  const [nSoportes,  setNSoportes]  = useState<Record<number, number>>({})
+  const [verSoportes, setVerSoportes] = useState<Egreso | null>(null)
 
   const cargar = useCallback(async () => {
     setLoading(true)
@@ -128,6 +135,8 @@ export default function InformeEgresos() {
 
       setEgresos(records)
       setBuscado(true)
+      // Cantidad de soportes adjuntos por egreso (no bloquea si aún no existe la tabla)
+      contarSoportes(records.map(r => r.id)).then(setNSoportes).catch(() => setNSoportes({}))
     } catch (e) {
       console.error(e)
     } finally {
@@ -148,38 +157,21 @@ export default function InformeEgresos() {
   // ── Gráfica ───────────────────────────────────────────────────────────
   function renderGrafica() {
     if (tiposUsados.length === 0) return null
-    const W = 640, H = 100, PAD = 50
     const maxVal = Math.max(...tiposUsados.map(t => t[1]))
-    const barW = Math.min(70, (W - PAD * 2) / tiposUsados.length - 10)
-
     return (
-      <svg width="100%" viewBox={`0 0 ${W} ${H + 60}`} style={{overflow:'visible'}}>
-        {[0.25, 0.5, 0.75, 1].map((f, i) => (
-          <g key={i}>
-            <line x1={PAD} y1={PAD + H * (1-f)} x2={W - PAD} y2={PAD + H * (1-f)}
-              stroke="#E8EFFD" strokeWidth="1" strokeDasharray="4 4"/>
-            <text x={PAD - 6} y={PAD + H * (1-f) + 4} textAnchor="end"
-              fontSize="9" fill="#8A9CC0">${fmt(Math.round(maxVal * f))}</text>
-          </g>
-        ))}
-        {tiposUsados.map(([tipo, total], i) => {
-          const barH = maxVal > 0 ? (total / maxVal) * H : 0
-          const x = PAD + (i * (W - PAD * 2)) / tiposUsados.length + ((W - PAD * 2) / tiposUsados.length - barW) / 2
-          const y = PAD + H - barH
+      <div className="v3-hbar" role="img" aria-label="Distribución de egresos por tipo">
+        {tiposUsados.map(([tipo, total]) => {
+          const on = maxVal > 0 ? Math.round((total / maxVal) * 40) : 0
           return (
-            <g key={tipo}>
-              <rect x={x} y={y} width={barW} height={barH} rx="4" fill="#C0392B" opacity="0.8"/>
-              <rect x={x} y={y} width={barW} height={Math.min(barH, 4)} rx="4" fill="#E74C3C"/>
-              <text x={x + barW/2} y={y - 6} textAnchor="middle" fontSize="9" fill="#C0392B" fontWeight="500">
-                ${fmt(total)}
-              </text>
-              <text x={x + barW/2} y={PAD + H + 16} textAnchor="middle" fontSize="9" fill="#8A9CC0">
-                {TIPOS_LABEL[tipo] || tipo}
-              </text>
-            </g>
+            <div key={tipo} className="v3-hbar-row">
+              <span className="n">{TIPOS_LABEL[tipo] || tipo}</span>
+              <span className="v3-pix">{Array.from({ length: 40 }, (_, k) => <span key={k} className={k < on ? 'on' : ''} />)}</span>
+              <span className="v">${fmt(total)}</span>
+              <span className="p">{totalGeneral > 0 ? ((total / totalGeneral) * 100).toFixed(1) : 0}%</span>
+            </div>
           )
         })}
-      </svg>
+      </div>
     )
   }
 
@@ -201,7 +193,7 @@ export default function InformeEgresos() {
     ws1.columns = [{ width: 25 }, { width: 22 }, { width: 16 }]
 
     ws1.mergeCells('A1:C1')
-    ws1.getCell('A1').value = 'IGLESIA EN MONTERÍA'
+    ws1.getCell('A1').value = textosIglesia().MAYUS
     ws1.getCell('A1').font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 }
     ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8B0000' } }
     ws1.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
@@ -352,7 +344,7 @@ export default function InformeEgresos() {
       .letras{background:#FFF8F8;border:1px solid #F5C6C6;padding:10px;font-style:italic;font-size:11px;margin-bottom:16px;border-radius:4px}
       .section-title{font-size:11px;font-weight:bold;color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px;margin-bottom:10px;margin-top:16px}
     </style></head><body>
-    <h1>IGLESIA EN MONTERÍA</h1>
+    <h1>${textosIglesia().MAYUS}</h1>
     <h2>${titulo}</h2>
     <div class="cards">
       <div class="card" style="border-color:#8B0000;background:#FFF0F0">
@@ -410,7 +402,7 @@ export default function InformeEgresos() {
   // ── Descargar comprobante individual ────────────────────────────────────
   function descargarComprobante(e: Egreso) {
     const fmtLocal = (n: number) => n.toLocaleString('es-CO')
-    const ciudad = e.ciudad || 'MONTERÍA'
+    const ciudad = e.ciudad || textosIglesia().CIUDAD
     const fechaFmt = e.fecha ? e.fecha.split('-').reverse().join('/') : '—'
     const enLetras = e.en_letras || numeroALetras(e.valor)
     const cuentas = e.cuentas || []
@@ -454,7 +446,7 @@ export default function InformeEgresos() {
     </style></head><body>
     <div class="comprobante">
       <div class="comp-header">
-        <div class="comp-title">COMPROBANTE DE EGRESO — IGLESIA EN MONTERÍA</div>
+        <div class="comp-title">COMPROBANTE DE EGRESO — ${textosIglesia().MAYUS}</div>
         <div class="comp-no">No. ${e.numero || '—'}</div>
       </div>
       <div style="padding:24px 0 0">
@@ -498,61 +490,15 @@ export default function InformeEgresos() {
   // ── UI ────────────────────────────────────────────────────────────────
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif}
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:50}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:36px;height:36px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:12px;color:rgba(255,255,255,.65)}
-        .actions-bar{display:flex;gap:10px}
-        .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-pdf{background:rgba(255,255,255,.12);color:#fff}
-        .btn-pdf:hover{background:rgba(255,255,255,.22)}
-        .btn-excel{background:#2BC48A;color:#fff;box-shadow:0 3px 12px rgba(43,196,138,.3)}
-        .btn-excel:hover{background:#1A9E6E}
-        .content{max-width:1000px;margin:0 auto;padding:32px 24px}
-        .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 16px rgba(43,91,191,.08);margin-bottom:20px}
-        .card-title{font-size:12px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;margin-bottom:18px;display:flex;align-items:center;gap:8px}
-        .card-title svg{color:#2B5BBF}
-        .filtro-tabs{display:flex;gap:8px;margin-bottom:16px}
-        .tab{padding:8px 20px;border-radius:8px;border:1.5px solid #D8E4F8;background:#F8FAFF;color:#8A9CC0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .tab.active{background:#2B5BBF;color:#fff;border-color:#2B5BBF}
-        .filtro-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-        .field{display:flex;flex-direction:column;gap:6px}
-        .label{font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase}
-        .input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s}
-        .input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-        select.input{cursor:pointer}
-        .btn-buscar{padding:10px 24px;background:#2B5BBF;color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:7px;box-shadow:0 3px 12px rgba(43,91,191,.25)}
-        .btn-buscar:hover{background:#1A3A8F}
-        .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;margin-bottom:20px}
-        .summary-card{background:#fff;border-radius:14px;padding:18px 16px;box-shadow:0 2px 12px rgba(43,91,191,.07);border:1.5px solid transparent}
-        .summary-card.main{border-color:#C0392B;background:linear-gradient(135deg,#8B0000,#C0392B)}
-        .s-label{font-size:10px;font-weight:500;color:#8A9CC0;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
-        .s-value{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#0F2560}
-        .s-pct{font-size:11px;color:#8A9CC0;margin-top:3px}
-        .summary-card.main .s-label{color:rgba(255,255,255,.7)}
-        .summary-card.main .s-value{color:#fff;font-size:26px}
-        .letras-box{background:#FFF8F8;border:1px solid #F5C6C6;border-radius:10px;padding:12px 16px;font-size:13px;color:#0F2560;font-style:italic;margin-bottom:20px}
-        .chart-wrap{background:#F8FAFF;border-radius:12px;padding:16px;overflow-x:auto}
-        .table-wrap{overflow-x:auto;border-radius:12px;border:1.5px solid #D8E4F8}
-        table{width:100%;border-collapse:collapse}
-        thead tr{background:#EEF4FF}
-        th{padding:11px 14px;font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
-        td{padding:10px 14px;font-size:13px;color:#0F2560;border-bottom:1px solid #F0F5FF}
-        tbody tr:last-child td{border-bottom:none}
-        tbody tr:hover{background:#FAFCFF}
-        tfoot td{padding:11px 14px;font-weight:500;color:#8B0000;background:#FFF0F0;border-top:1.5px solid #F5C6C6}
-        .num{text-align:right;font-variant-numeric:tabular-nums}
-        .tipo-badge{display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:#FFF0F0;color:#8B0000;border:1px solid #F5C6C6}
-        .empty{text-align:center;padding:48px 24px;color:#8A9CC0}
-        @media(max-width:600px){.content{padding:16px}.filtro-row{flex-direction:column}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
+
+      {verSoportes && (
+        <VerSoportes
+          egreso={verSoportes}
+          onCerrar={() => setVerSoportes(null)}
+          onCambio={n => setNSoportes(prev => ({ ...prev, [verSoportes.id]: n }))}
+        />
+      )}
 
       <div className="top-bar">
         <div className="top-left">
@@ -561,7 +507,7 @@ export default function InformeEgresos() {
           </button>
           <div>
             <div className="top-title">Informe de Egresos</div>
-            <div className="top-subtitle">Iglesia en Montería</div>
+            <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
         {buscado && egresos.length > 0 && (
@@ -646,7 +592,7 @@ export default function InformeEgresos() {
             <div className="summary-card main">
               <div className="s-label">Total Egresos</div>
               <div className="s-value">${fmt(totalGeneral)}</div>
-              <div className="s-pct" style={{color:'rgba(255,255,255,.6)'}}>{egresos.length} {egresos.length === 1 ? 'registro' : 'registros'}</div>
+              <div className="s-pct">{egresos.length} {egresos.length === 1 ? 'registro' : 'registros'}</div>
             </div>
             {tiposUsados.map(([tipo, total]) => (
               <div key={tipo} className="summary-card">
@@ -694,23 +640,30 @@ export default function InformeEgresos() {
                 <tbody>
                   {egresos.map((e, i) => (
                     <tr key={e.id}>
-                      <td style={{color:'#8A9CC0',fontSize:12}}>{i+1}</td>
+                      <td className="v3-mono" style={{color:'var(--muted)'}}>{i+1}</td>
                       <td>{e.fecha.split('-').reverse().join('/')}</td>
-                      <td style={{color:'#8A9CC0'}}>{e.numero || '—'}</td>
+                      <td className="v3-mono" style={{fontWeight:600}}>{e.numero || '—'}</td>
                       <td style={{fontWeight:500}}>{e.pagado_a}</td>
-                      <td style={{fontSize:12,color:'#4A6090'}}>{e.concepto || '—'}</td>
+                      <td style={{color:'var(--text-2)'}}>{e.concepto || '—'}</td>
                       <td><span className="tipo-badge">{TIPOS_LABEL[e.tipo] || e.tipo}</span></td>
-                      <td className="num" style={{fontWeight:600,color:'#8B0000'}}>${fmt(e.valor)}</td>
+                      <td className="num v3-mono" style={{fontWeight:600}}>${fmt(e.valor)}</td>
                       <td style={{textAlign:'center'}}>
                         <button
                           onClick={() => descargarComprobante(e)}
                           title="Descargar comprobante"
-                          style={{background:'#EEF4FF',border:'1.5px solid #C7D9FF',borderRadius:8,padding:'5px 10px',cursor:'pointer',color:'#1A3A8F',display:'inline-flex',alignItems:'center',gap:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",transition:'all .2s'}}
-                          onMouseOver={ev => (ev.currentTarget.style.background='#1A3A8F') && (ev.currentTarget.style.color='#fff') as any}
-                          onMouseOut={ev => { ev.currentTarget.style.background='#EEF4FF'; ev.currentTarget.style.color='#1A3A8F' }}
+                          className="btn btn-sm"
                         >
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                           Ver
+                        </button>
+                        <button
+                          onClick={() => setVerSoportes(e)}
+                          title={nSoportes[e.id] ? `Ver soportes (${nSoportes[e.id]})` : 'Adjuntar soporte'}
+                          className={'btn btn-sm btn-sop' + (nSoportes[e.id] ? ' tiene' : '')}
+                          style={{marginLeft:6}}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                          {nSoportes[e.id] ? nSoportes[e.id] : ''}
                         </button>
                       </td>
                     </tr>
@@ -718,8 +671,9 @@ export default function InformeEgresos() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={7} style={{fontWeight:600}}>TOTAL GENERAL</td>
-                    <td className="num" style={{fontWeight:700}}>${fmt(totalGeneral)}</td>
+                    <td colSpan={6}>TOTAL GENERAL</td>
+                    <td className="num" style={{color:'var(--navy)'}}>${fmt(totalGeneral)}</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               </table>
@@ -730,3 +684,15 @@ export default function InformeEgresos() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.content > .card{padding:14px}
+.content > .card > .card-title{margin:-14px -14px 14px;padding:10px 14px;border-bottom:1px solid var(--line-2)}
+.content > .card > .table-wrap{margin:0 -14px -14px}
+.filtro-tabs{margin-bottom:12px}
+.filtro-row .field{min-width:150px}
+.btn-buscar{height:34px}
+table{min-width:820px}
+.btn-sop{color:var(--muted)}
+.btn-sop.tiene{color:var(--navy);border-color:var(--navy-line);background:var(--navy-soft)}
+`

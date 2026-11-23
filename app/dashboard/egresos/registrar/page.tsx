@@ -1,102 +1,80 @@
 "use client"
-import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { BASE_V3 } from '@/lib/estilosV3'
+import SubirComprobantes from '@/components/SubirComprobantes'
+import { useEffect } from 'react'
+import { useConfig, cargarConfig, ICONOS } from '@/lib/configuracion'
 
-const TIPOS = [
-  { id: 'energia',       label: 'Energía',          logo: '/logos/energia.png'        },
-  { id: 'acueducto',     label: 'Acueducto',        logo: '/logos/acueducto.png'      },
-  { id: 'gas',           label: 'Gas',              logo: '/logos/gas.png'            },
-  { id: 'alquiler',      label: 'Alquiler',         logo: '/logos/alquiler.png'       },
-  { id: 'dian',          label: 'DIAN',             logo: '/logos/dian.png'           },
-  { id: 'obrero-local',  label: 'Obrero Local',     logo: '/logos/obrero-local.png'   },
-  { id: 'diezmo-diezmo', label: 'Diezmo de Diezmo', logo: '/logos/diezmo-diezmo.png' },
-  { id: 'internet',      label: 'Internet',         logo: '/logos/internet.png'       },
-  { id: 'otro',          label: 'Otro',             logo: '/logos/otro.png'           },
-]
-
-function LogoImg({ src, alt }: { src: string; alt: string }) {
-  const [error, setError] = useState(false)
-  if (error) {
-    return (
-      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,color:'#B0C0DC'}}>
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-          <rect x="3" y="3" width="18" height="18" rx="4"/>
-          <circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-        </svg>
-        <span style={{fontSize:9,fontWeight:500,letterSpacing:'.04em',textTransform:'uppercase'}}>Logo</span>
-      </div>
-    )
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt}
-      onError={() => setError(true)}
-      style={{width:'100%',height:'100%',objectFit:'contain'}}
-    />
-  )
-}
-
-export default function RegistrarEgresoPage() {
+export default function RegistrarEgreso() {
   const router = useRouter()
+  const cfg = useConfig()
+  useEffect(() => { cargarConfig() }, [])
+  // Tipos de Configuración → Proveedores (los de siempre si aún no hay script 05)
+  const TIPOS = cfg.tipos.filter(t => t.activo).map(t => ({
+    id: t.id, label: t.nombre,
+    puc: t.esLibre ? 'CUENTAS LIBRES' : (t.cuentas[0]?.codigo || ''),
+    icon: (ICONOS[t.icono] || ICONOS.otro).d,
+  }))
 
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        .page { min-height: 100vh; background: #EEF4FF; font-family: 'DM Sans', sans-serif; }
-        .top-bar { background: linear-gradient(135deg, #1A3A8F 0%, #2B5BBF 60%, #3B6FD4 100%); padding: 0 32px; height: 64px; display: flex; align-items: center; gap: 14px; box-shadow: 0 2px 20px rgba(26,58,143,.25); position: sticky; top: 0; z-index: 50; }
-        .back-btn { background: rgba(255,255,255,.12); border: none; color: #fff; width: 36px; height: 36px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s; flex-shrink: 0; }
-        .back-btn:hover { background: rgba(255,255,255,.22); }
-        .top-title { font-family: 'Playfair Display', serif; font-size: 20px; font-weight: 700; color: #fff; }
-        .top-subtitle { font-size: 12px; color: rgba(255,255,255,.65); }
-        .content { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
-        .section-label { font-size: 12px; font-weight: 500; color: #8A9CC0; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 24px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
-        .card { background: #fff; border-radius: 20px; padding: 24px 16px 20px; box-shadow: 0 2px 16px rgba(43,91,191,.07); display: flex; flex-direction: column; align-items: center; gap: 14px; cursor: pointer; border: 1.5px solid transparent; transition: transform .2s, box-shadow .2s, border-color .2s; animation: fadeUp .5s ease both; }
-        .card:hover { transform: translateY(-4px); box-shadow: 0 10px 32px rgba(43,91,191,.14); border-color: #C7D9FF; }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .img-wrap { width: 90px; height: 90px; border-radius: 18px; background: #F4F8FF; border: 1.5px solid #E8EFFD; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; padding: 10px; }
-        .card-label { font-size: 14px; font-weight: 500; color: #0F2560; text-align: center; }
-        .select-btn { width: 100%; padding: 9px 0; background: #EEF4FF; color: #2B5BBF; border: 1.5px solid #C7D9FF; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .2s; }
-        .select-btn:hover { background: #2B5BBF; color: #fff; border-color: #2B5BBF; }
-        @media (max-width: 600px) { .grid { grid-template-columns: repeat(2, 1fr); } .content { padding: 24px 16px; } }
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       <div className="top-bar">
-        <button className="back-btn" onClick={() => router.push('/dashboard')}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-        </button>
         <div>
-          <div className="top-title">Registrar Egreso</div>
-          <div className="top-subtitle">Selecciona el tipo de egreso</div>
+          <div className="top-subtitle" style={{ marginTop: 0, marginBottom: 2 }}>Egresos · Registrar</div>
+          <div className="top-title">¿Qué egreso vas a registrar?</div>
         </div>
       </div>
 
       <div className="content">
-        <div className="section-label">¿Qué tipo de egreso vas a registrar?</div>
-        <div className="grid">
-          {TIPOS.map((tipo, i) => (
-            <div key={tipo.id} className="card" style={{ animationDelay: `${i * 0.06}s` }}>
-              <div className="img-wrap">
-                <LogoImg src={tipo.logo} alt={tipo.label}/>
-              </div>
-              <div className="card-label">{tipo.label}</div>
-              <button
-                className="select-btn"
-                onClick={() => router.push(`/dashboard/egresos/registrar/${tipo.id}`)}
-              >
-                Seleccionar
+        <div className="eg-wrap">
+          <section className="eg-grid">
+            {TIPOS.map(t => (
+              <button key={t.id} type="button" className="eg-card" onClick={() => router.push(`/dashboard/egresos/registrar/${t.id}`)}>
+                <span className="eg-ico">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={t.icon} /></svg>
+                </span>
+                <span className="eg-txt"><b>{t.label}</b><small>{t.puc}</small></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="eg-arrow"><path d="m9 6 6 6-6 6" /></svg>
               </button>
+            ))}
+          </section>
+
+          <aside className="card eg-side">
+            <div className="card-title" style={{ padding: '10px 14px', borderBottom: '1px solid var(--line-2)' }}>
+              Desde el comprobante <span className="v3-soon" style={{background:'var(--navy-soft)',color:'var(--navy)'}}>CON IA</span>
             </div>
-          ))}
+            <div className="eg-side-body">
+              <p className="eg-side-t">Sube la foto o PDF y llenamos el egreso por ti</p>
+              <p className="eg-side-d">Sube uno o varios comprobantes del mismo egreso (mismo destinatario y misma fecha). Se leen el destinatario, el valor y la fecha, se suman y se prellena el formulario para que lo revises.</p>
+              <SubirComprobantes />
+            </div>
+          </aside>
         </div>
       </div>
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.eg-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:stretch}
+.eg-grid{flex:999 1 560px;min-width:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-content:start}
+.eg-card{display:flex;align-items:center;gap:12px;padding:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;cursor:pointer;text-align:left;font-family:var(--sans);color:var(--text);transition:border-color .15s,box-shadow .15s}
+.eg-card:hover{border-color:var(--navy);box-shadow:inset 3px 0 0 var(--navy)}
+.eg-card:hover .eg-ico{background:var(--navy);color:#fff;border-color:var(--navy)}
+.eg-ico{width:40px;height:40px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--fill);border:1px solid var(--line);color:var(--navy);transition:background .15s,color .15s}
+.eg-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.eg-txt b{font-size:14px;font-weight:600}
+.eg-txt small{font:400 11px var(--mono);color:var(--muted)}
+.eg-arrow{color:var(--muted)}
+.eg-side{flex:1 1 300px;min-width:0;display:flex;flex-direction:column}
+.eg-side .v3-soon{margin-left:auto}
+.eg-side-body{padding:14px;display:flex;flex-direction:column;gap:10px;flex:1}
+.eg-side-t{font-size:15px;font-weight:600}
+.eg-side-d{font-size:13px;line-height:1.5;color:var(--muted)}
+.eg-drop{flex:1;min-height:180px;border:1.5px dashed var(--line-strong);border-radius:10px;background:var(--fill);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px;text-align:center;opacity:.8;cursor:not-allowed}
+.eg-drop b{font-size:14px;font-weight:600}
+.eg-drop small{font:400 11px var(--mono);color:var(--muted)}
+.eg-drop-ico{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--navy);display:flex;align-items:center;justify-content:center}
+`

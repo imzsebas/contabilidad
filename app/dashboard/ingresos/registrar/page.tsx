@@ -4,6 +4,10 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { traerTodo } from '@/lib/db'
 import { cargarExcelJS } from '@/lib/excel'
+import { BASE_V3 } from '@/lib/estilosV3'
+import { cargarConfig, type IngresosCfg } from '@/lib/configuracion'
+import { textosIglesia, sinTildes } from '@/lib/configuracion'
+import NombreIglesia from '@/components/NombreIglesia'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface Column  { id: string; nombre: string; codigoPUC: string }
@@ -70,6 +74,22 @@ function defaultDist(): DistItem[] {
     { id: uid(), concepto: 'Ofrenda Obrero (Luis Álvarez)', esFijo: true, tramos: [{ id: uid(), porcentaje: 10, baseId: 'sinVA' }], montoCalculado: 0, montoAproximado: 0 },
     { id: uid(), concepto: 'Necesidades diversas',          esFijo: true, tramos: [{ id: uid(), porcentaje: 10, baseId: 'sinVA' }], montoCalculado: 0, montoAproximado: 0 },
   ]
+}
+
+// Columnas y distribución de Configuración → Ingresos
+function desdeConfig(ing: IngresosCfg): { cols: Column[]; dist: DistItem[] } {
+  const cols: Column[] = ing.columnas.map(c => ({ id: uid(), nombre: c.nombre, codigoPUC: c.codigoPUC }))
+  const baseId = (b: string) => {
+    if (!b.startsWith('col:')) return b
+    const col = cols.find(c => c.nombre.trim().toLowerCase() === b.slice(4).trim().toLowerCase())
+    return col ? 'col:' + col.id : 'sinVA'
+  }
+  const dist: DistItem[] = ing.distribucion.map(d => ({
+    id: uid(), concepto: d.concepto, esFijo: d.esFijo,
+    tramos: d.tramos.map(t => ({ id: uid(), porcentaje: t.porcentaje, baseId: baseId(t.base) })),
+    montoCalculado: 0, montoAproximado: 0,
+  }))
+  return { cols, dist }
 }
 
 // ── Cálculos ───────────────────────────────────────────────────────────────
@@ -163,15 +183,17 @@ function AutocompleteInput({
           if (e.key === 'Enter')     { e.preventDefault(); handleSelect(suggestions[highlightIndex]) }
           if (e.key === 'Escape')    { setOpen(false) }
         }}
-        style={memberId ? { borderColor: '#2B5BBF', background: '#F0F5FF' } : {}}
+        style={memberId ? { borderColor: 'var(--navy)', background: 'var(--navy-soft)', color: 'var(--text)', fontWeight: 500, paddingRight: 30 } : {}}
       />
 
       {memberId && (
-        <span style={{
+        <span title="Miembro registrado" style={{
           position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
-          background: '#2B5BBF', color: '#fff', fontSize: 10,
-          borderRadius: 100, padding: '2px 7px', fontWeight: 500, pointerEvents: 'none'
-        }}>✓</span>
+          width: 18, height: 18, borderRadius: '50%', background: 'var(--navy)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none'
+        }}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
+        </span>
       )}
 
       {open && suggestions.length > 0 && (
@@ -182,7 +204,7 @@ function AutocompleteInput({
               type="button"
               className="autocomplete-item"
               onClick={() => handleSelect(m)}
-              style={{ background: index === highlightIndex ? '#EEF4FF' : 'transparent' }}
+              style={{ background: index === highlightIndex ? 'var(--fill)' : 'transparent' }}
             >
               <span className="autocomplete-nombre">{m.nombre}</span>
               <span className="autocomplete-cedula">CC {m.cedula}</span>
@@ -211,6 +233,18 @@ export default function RegistrarIngreso() {
   const [saving,         setSaving]         = useState(false)
   const [saved,          setSaved]          = useState(false)
   const [error,          setError]          = useState('')
+
+  // Al abrir, usar las columnas y la distribución de Configuración (si ya existen
+  // y si todavía no se ha escrito nada en la planilla)
+  const tocado = useRef(false)
+  useEffect(() => { if (rows.some(r => r.nombre || Object.keys(r.valores).length)) tocado.current = true }, [rows])
+  useEffect(() => {
+    cargarConfig().then(c => {
+      if (!c.conBaseDatos || tocado.current) return
+      const { cols: nc, dist: nd } = desdeConfig(c.ingresos)
+      if (nc.length) { setCols(nc); setDist(nd) }
+    })
+  }, [])
 
   // Alta rápida de miembro nuevo desde la tabla de ingresos
   const [showNuevoMiembro,   setShowNuevoMiembro]   = useState(false)
@@ -382,6 +416,9 @@ export default function RegistrarIngreso() {
   const { porCol, general } = calcTotales(cols, rows)
   const totalDist = dist.reduce((a,i) => a + i.montoAproximado, 0)
   const saldo     = general - totalDist
+  // Solo para el panel de resumen (no cambia ningún cálculo)
+  const basesResumen = calcBases(cols, rows)
+  const COLORES_COL = ['var(--pix-3)', 'var(--navy)', 'var(--violeta)', 'var(--ambar)', 'var(--pix-1)', 'var(--navy-mid)']
 
   // ── Guardar ────────────────────────────────────────────────────────────
   async function guardar() {
@@ -483,7 +520,7 @@ export default function RegistrarIngreso() {
         </div>
       </div>
       <div class="fila">
-        <div class="campo recibido"><span class="campo-label">Recibido de:</span> Hermanos Iglesia en Montería</div>
+        <div class="campo recibido"><span class="campo-label">Recibido de:</span> Hermanos ${textosIglesia().nombre}</div>
         <div class="campo monto"><span class="campo-label" style="color:#006400">$</span> ${fmt(general)}</div>
       </div>
       <div class="fila"><div class="campo suma-letras"><span class="campo-label">La suma de (en letras):</span> ${numeroALetras(general)} <span class="campo-label">m/cte</span></div></div>
@@ -556,7 +593,7 @@ export default function RegistrarIngreso() {
     dataCell(ws1.getCell('C2'), 'Dia: ' + d, undefined, false, 'center')
     dataCell(ws1.getCell('D2'), 'Mes: ' + m, undefined, false, 'center')
     dataCell(ws1.getCell('E2'), 'Año: ' + y, undefined, false, 'center')
-    ws1.mergeCells('A3:D3'); dataCell(ws1.getCell('A3'), 'Recibido de: Hermanos Iglesia en Monteria')
+    ws1.mergeCells('A3:D3'); dataCell(ws1.getCell('A3'), `Recibido de: Hermanos ${sinTildes(textosIglesia().nombre)}`)
     dataCell(ws1.getCell('E3'), general, '0,##0', true, 'right')
     ws1.getCell('E3').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: VERDE_CLARO } }
     ws1.getCell('E3').font = { bold: true, color: { argb: VERDE_OSC }, size: 11 }
@@ -597,7 +634,7 @@ export default function RegistrarIngreso() {
     const ws2 = wb.addWorksheet('Ingresos')
     ws2.columns = [{ width: 8 }, ...cols.map(() => ({ width: 22 })), { width: 20 }]
     ws2.mergeCells(1,1,1,cols.length+2); hdrStyle(ws2.getCell('A1'), VERDE_OSC)
-    ws2.getCell('A1').value = 'IGLESIA EN MONTERIA'
+    ws2.getCell('A1').value = textosIglesia().MAYUS_SIN
     ws2.getCell('A1').font = { bold: true, color: { argb: BLANCO }, size: 13 }; ws2.getRow(1).height = 26
     ws2.mergeCells(2,1,2,cols.length+2); hdrStyle(ws2.getCell('A2'), VERDE_CLARO, VERDE_OSC)
     ws2.getCell('A2').value = 'REGISTRO DE INGRESOS'; ws2.getRow(2).height = 20
@@ -728,148 +765,7 @@ export default function RegistrarIngreso() {
   // ── UI ─────────────────────────────────────────────────────────────────
   return (
     <div className="page">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        .page{min-height:100vh;background:#EEF4FF;font-family:'DM Sans',sans-serif}
-
-        .top-bar{background:linear-gradient(135deg,#1A3A8F 0%,#2B5BBF 60%,#3B6FD4 100%);padding:0 32px;height:60px;display:flex;align-items:center;box-shadow:0 2px 20px rgba(26,58,143,.25);position:sticky;top:0;z-index:60}
-        .top-left{display:flex;align-items:center;gap:14px}
-        .back-btn{background:rgba(255,255,255,.12);border:none;color:#fff;width:36px;height:36px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
-        .back-btn:hover{background:rgba(255,255,255,.22)}
-        .top-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#fff}
-        .top-subtitle{font-size:11px;color:rgba(255,255,255,.65)}
-
-        /* Barra compacta fija: fecha + total en vivo */
-        .sticky-bar{position:sticky;top:60px;z-index:55;background:#fff;border-bottom:1.5px solid #D8E4F8;box-shadow:0 2px 12px rgba(43,91,191,.06)}
-        .sticky-bar-inner{max-width:1100px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-        .sticky-fecha{display:flex;align-items:center;gap:10px}
-        .fecha-input{padding:8px 12px;border:1.5px solid #D8E4F8;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;outline:none;transition:border .2s}
-        .fecha-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-        .sticky-fecha-hint{font-size:11px;color:#8A9CC0}
-        .sticky-total{display:flex;align-items:baseline;gap:8px}
-        .sticky-total-label{font-size:11px;color:#8A9CC0;text-transform:uppercase;letter-spacing:.05em}
-        .sticky-total-value{font-family:'DM Sans',sans-serif;font-size:22px;font-weight:700;color:#1A3A8F}
-
-        .content{max-width:1100px;margin:0 auto;padding:20px 24px 32px}
-
-        .card{background:#fff;border-radius:16px;padding:24px;box-shadow:0 2px 16px rgba(43,91,191,.08);margin-bottom:20px}
-        .card-title{font-size:13px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;gap:8px}
-        .card-title svg{color:#2B5BBF}
-
-        /* Pestañas Tabla / Distribución */
-        .tabs-row{display:flex;gap:6px;margin-bottom:16px;background:#F0F5FF;padding:4px;border-radius:11px;width:fit-content}
-        .tab-btn{padding:8px 18px;border:none;border-radius:8px;background:transparent;color:#4A6090;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:6px}
-        .tab-btn.active{background:#fff;color:#1A3A8F;box-shadow:0 2px 8px rgba(43,91,191,.12)}
-        .tab-badge{background:#EEF4FF;color:#2B5BBF;font-size:10px;padding:1px 7px;border-radius:100px;font-weight:600}
-        .tab-btn.active .tab-badge{background:#2B5BBF;color:#fff}
-
-        .table-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
-        .table-card-title{font-size:13px;font-weight:500;color:#4A6090;letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
-        .table-card-title svg{color:#2B5BBF}
-        .table-card-actions{display:flex;gap:8px;align-items:center}
-
-
-        .popover-addcol{position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1.5px solid #D8E4F8;border-radius:14px;box-shadow:0 12px 32px rgba(43,91,191,.18);padding:18px;z-index:120;width:280px}
-        .popover-addcol .field-wrap{margin-bottom:12px}
-        .popover-addcol-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
-
-        .field-wrap{display:flex;flex-direction:column;gap:5px}
-        .field-label{font-size:11px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase}
-        .text-input{padding:10px 14px;border:1.5px solid #D8E4F8;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;outline:none;transition:border .2s;width:100%;min-width:0}
-        .text-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-
-        .add-col-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
-
-        .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-primary{background:#2B5BBF;color:#fff;box-shadow:0 3px 12px rgba(43,91,191,.25)}
-        .btn-primary:hover{background:#1A3A8F;transform:translateY(-1px)}
-        .btn-danger{background:#FEE8E8;color:#C0392B;border:1.5px solid #FBBCBC}
-        .btn-danger:hover{background:#FBBCBC}
-        .btn-success{background:#E8F8F1;color:#1A7A4A;border:1.5px solid #A8DFC0}
-        .btn-success:hover{background:#A8DFC0}
-        .btn-pdf{background:#EEF4FF;color:#2B5BBF;border:1.5px solid #C7D9FF}
-        .btn-pdf:hover{background:#C7D9FF}
-        .btn-sm{padding:6px 12px;font-size:12px}
-        .btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
-        .btn-ghost{background:transparent;color:#4A6090;border:1.5px solid #D8E4F8}
-        .btn-ghost:hover{background:#F0F5FF}
-
-        /* Acciones secundarias: agregar (discreto) y eliminar (ícono) */
-        .btn-add-secondary{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:9px;border:1.5px dashed #B9CDF5;background:#F5F8FF;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:all .2s}
-        .btn-add-secondary:hover{background:#EEF4FF;border-style:solid}
-        .btn-icon-x{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:#B0B8CC;border-radius:6px;cursor:pointer;transition:all .15s;flex-shrink:0}
-        .btn-icon-x:hover{background:#FEE8E8;color:#C0392B}
-        .btn-icon-x:disabled{opacity:.35;cursor:not-allowed}
-        .icon-group{display:flex;border:1.5px solid #D8E4F8;border-radius:10px;overflow:hidden}
-        .icon-group button{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border:none;background:#fff;color:#4A6090;cursor:pointer;transition:background .2s}
-        .icon-group button:not(:last-child){border-right:1.5px solid #D8E4F8}
-        .icon-group button:hover{background:#F0F5FF;color:#2B5BBF}
-
-        .btn-add-member{flex-shrink:0;width:38px;height:38px;border-radius:8px;border:1.5px dashed #B9CDF5;background:#F5F8FF;color:#2B5BBF;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
-        .btn-add-member:hover{background:#EEF4FF;border-color:#2B5BBF;border-style:solid}
-
-        .modal-overlay{position:fixed;inset:0;background:rgba(15,37,96,.45);display:flex;align-items:center;justify-content:center;z-index:300;padding:20px}
-        .modal-card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:480px;box-shadow:0 12px 40px rgba(15,37,96,.25)}
-        .modal-title{display:flex;align-items:center;justify-content:space-between;font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#0F2560;margin-bottom:18px}
-        .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
-        .modal-actions{display:flex;justify-content:flex-end;gap:10px}
-        @media(max-width:480px){.modal-grid{grid-template-columns:1fr}}
-
-        .table-wrap{overflow-x:auto;border-radius:12px;border:1.5px solid #D8E4F8}
-        table{width:100%;border-collapse:collapse;min-width:400px}
-        thead tr{background:#EEF4FF}
-        th{padding:12px 14px;font-size:12px;font-weight:500;color:#4A6090;letter-spacing:.04em;text-transform:uppercase;border-bottom:1.5px solid #D8E4F8;white-space:nowrap}
-        td{padding:8px 10px;border-bottom:1px solid #F0F5FF;vertical-align:middle}
-        tbody tr:last-child td{border-bottom:none}
-        tbody tr:hover{background:#FAFCFF}
-        tfoot td{padding:12px 14px;font-weight:500;color:#0F2560;background:#EEF4FF;border-top:1.5px solid #D8E4F8}
-
-        .col-header{display:flex;flex-direction:column;align-items:center;gap:2px}
-        .col-puc{font-size:10px;color:#8A9CC0;font-weight:400;text-transform:none;letter-spacing:0}
-        .num-input{width:100%;padding:8px 10px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0F2560;text-align:right;outline:none;transition:border .2s;background:#FAFCFF}
-        .num-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1);background:#fff}
-
-        .nombre-input{width:100%;padding:8px 10px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;color:#0F2560;outline:none;transition:border .2s;background:#FAFCFF;min-width:160px}
-        .nombre-input:focus{border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1);background:#fff}
-
-        .autocomplete-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1.5px solid #D8E4F8;border-radius:10px;box-shadow:0 8px 24px rgba(43,91,191,.12);z-index:200;overflow:hidden}
-        .autocomplete-item{width:100%;background:none;border:none;padding:10px 14px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;transition:background .15s;font-family:'DM Sans',sans-serif}
-        .autocomplete-nombre{font-size:13px;font-weight:500;color:#0F2560}
-        .autocomplete-cedula{font-size:11px;color:#8A9CC0}
-
-        .letras-line{margin-top:14px;padding:10px 14px;background:#F8FAFF;border:1px solid #E8EFFD;border-radius:10px;font-size:12px;color:#4A6090;font-style:italic}
-        .letras-line strong{color:#0F2560;font-style:normal;font-weight:500}
-
-        .dist-porcentaje{font-size:12px;color:#8A9CC0}
-        .dist-monto{color:#2B5BBF;font-weight:500}
-        .dist-fijo{font-size:11px;color:#8A9CC0;background:#F0F5FF;padding:3px 8px;border-radius:100px}
-        .saldo-pos{color:#1A7A4A;font-weight:700}
-        .saldo-neg{color:#C0392B;font-weight:700}
-
-        .text-input-sm-plain{width:100%;padding:7px 9px;border:1.5px solid transparent;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;color:#0F2560;outline:none;background:transparent;transition:all .2s}
-        .text-input-sm-plain:hover{background:#FAFCFF;border-color:#E8EFFD}
-        .text-input-sm-plain:focus{background:#fff;border-color:#2B5BBF;box-shadow:0 0 0 3px rgba(43,91,191,.1)}
-        .tramo-row{display:flex;align-items:center;gap:6px}
-        .tramo-pct{width:56px;flex-shrink:0;padding:6px 7px;font-size:12px}
-        .tramo-base{padding:6px 8px;border:1.5px solid #D8E4F8;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:11px;color:#4A6090;background:#FAFCFF;outline:none;flex:1;min-width:0;cursor:pointer}
-        .tramo-base:focus{border-color:#2B5BBF}
-        .btn-add-tramo{align-self:flex-start;background:none;border:none;color:#2B5BBF;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:2px}
-        .btn-add-tramo:hover{color:#1A3A8F}
-        .pct-summary{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:8px;transition:background .15s}
-        .pct-summary:hover{background:#F8FAFF}
-        .pct-summary span{font-size:12px;color:#4A6090}
-        .btn-edit-pct{width:22px;height:22px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;border:none;background:#F0F5FF;color:#2B5BBF;border-radius:6px;cursor:pointer;transition:all .15s}
-        .btn-edit-pct:hover{background:#2B5BBF;color:#fff}
-
-        .actions-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;align-items:center;margin-top:8px}
-
-        .alert-success{background:#E8F8F1;border:1.5px solid #A8DFC0;color:#1A7A4A;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
-        .alert-error{background:#FEE8E8;border:1.5px solid #FBBCBC;color:#C0392B;border-radius:10px;padding:12px 16px;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px}
-
-        @media(max-width:768px){.content{padding:16px}.add-col-row{flex-direction:column}.actions-row{justify-content:stretch}.actions-row .btn{flex:1;justify-content:center}.sticky-bar-inner{padding:10px 16px}.top-bar{padding:0 16px}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-      `}</style>
+      <style>{BASE_V3 + EXTRA_CSS}</style>
 
       {/* Top bar — solo identidad, sin acciones (van abajo) */}
       <div className="top-bar">
@@ -879,7 +775,7 @@ export default function RegistrarIngreso() {
           </button>
           <div>
             <div className="top-title">Registrar Ingreso</div>
-            <div className="top-subtitle">Iglesia en Montería</div>
+            <div className="top-subtitle"><NombreIglesia /></div>
           </div>
         </div>
       </div>
@@ -915,6 +811,8 @@ export default function RegistrarIngreso() {
           </button>
         </div>
 
+        <div className="fm-wrap">
+        <div className="fm-main">
         {/* ── Tab: Tabla de ingresos (protagonista) ────────────────────────── */}
         {tab === 'tabla' && (
           <div className="card">
@@ -995,7 +893,7 @@ export default function RegistrarIngreso() {
                           >+</button>
                         </div>
                       </td>
-                      <td style={{textAlign:'center',color:'#8A9CC0',fontSize:12}}>{i+1}</td>
+                      <td className="v3-mono" style={{textAlign:'center',color:'var(--muted)',fontSize:12}}>{i+1}</td>
                       {cols.map(c => (
                         <td key={c.id}>
                           <input
@@ -1081,7 +979,7 @@ export default function RegistrarIngreso() {
                                   value={String(t.porcentaje)}
                                   onChange={e => setTramoPorcentaje(item.id, t.id, e.target.value)}
                                 />
-                                <span style={{fontSize:11,color:'#8A9CC0'}}>% de</span>
+                                <span style={{fontSize:11,color:'var(--muted)'}}>% de</span>
                                 <select
                                   className="tramo-base"
                                   value={t.baseId}
@@ -1100,7 +998,7 @@ export default function RegistrarIngreso() {
                             ))}
                             <div style={{display:'flex',gap:12,alignItems:'center'}}>
                               <button className="btn-add-tramo" onClick={() => agregarTramo(item.id)}>+ agregar tramo</button>
-                              <button className="btn-add-tramo" style={{color:'#1A7A4A'}} onClick={() => setEditingDistId(null)}>Listo</button>
+                              <button className="btn-add-tramo" style={{color:'var(--navy)',fontWeight:600}} onClick={() => setEditingDistId(null)}>Listo</button>
                             </div>
                           </div>
                         ) : (
@@ -1163,6 +1061,53 @@ export default function RegistrarIngreso() {
               {saving ? 'Guardando...' : saved ? '✓ Guardado' : 'Guardar registro'}
             </button>
           )}
+        </div>
+        </div>
+
+        {/* Resumen del registro (solo lectura) */}
+        <aside className="fm-side">
+          <section className="card">
+            <div className="card-title" style={{padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>Total del registro</div>
+            <div className="fm-side-body">
+              <div className="fm-total">${fmt(general)}</div>
+              {general > 0 && (
+                <div className="fm-stack" role="img" aria-label="Peso de cada concepto en el total">
+                  {cols.map((c, k) => {
+                    const v = porCol[c.id] || 0
+                    return v > 0 ? <span key={c.id} style={{ flexGrow: v, background: COLORES_COL[k % COLORES_COL.length] }} title={`${c.nombre}: $${fmt(v)}`} /> : null
+                  })}
+                </div>
+              )}
+              {cols.map((c, k) => (
+                <div key={c.id} className="fm-line">
+                  <span><i style={{ background: COLORES_COL[k % COLORES_COL.length] }} />{c.nombre}</span>
+                  <b>${fmt(porCol[c.id] || 0)}</b>
+                </div>
+              ))}
+              <div className="fm-line sep"><span>Total sin V.A.</span><b>${fmt(basesResumen.sinVA || 0)}</b></div>
+              {tab === 'tabla' && (
+                <button type="button" className="btn btn-primary" style={{width:'100%',height:38,marginTop:4}} onClick={() => setTab('distribucion')}>
+                  Revisar distribución y guardar →
+                </button>
+              )}
+            </div>
+          </section>
+          <section className="card">
+            <div className="card-title" style={{padding:'10px 14px',borderBottom:'1px solid var(--line-2)'}}>
+              Distribución calculada
+              {tab === 'tabla' && <button type="button" className="btn-add-tramo" onClick={() => setTab('distribucion')}>Editar</button>}
+            </div>
+            <div className="fm-side-body" style={{gap:0}}>
+              {dist.map(d => (
+                <div key={d.id} className="fm-dist">
+                  <span>{d.concepto}<small>{d.tramos.map(t => `${t.porcentaje}% ${baseLabel(t.baseId, cols)}`).join(' + ')}</small></span>
+                  <b>${fmt(d.montoAproximado || d.montoCalculado)}</b>
+                </div>
+              ))}
+              <div className="fm-dist last"><span>Saldo restante</span><b style={{color: saldo >= 0 ? 'var(--navy)' : 'var(--danger)'}}>${fmt(saldo)}</b></div>
+            </div>
+          </section>
+        </aside>
         </div>
       </div>
 
@@ -1233,3 +1178,49 @@ export default function RegistrarIngreso() {
     </div>
   )
 }
+
+const EXTRA_CSS = `
+.top-bar{padding-bottom:0}
+.sticky-bar{position:sticky;top:var(--v3-top-alto,0px);z-index:30;margin:12px 20px 0;background:var(--card);border:1px solid var(--line);border-radius:10px}
+.sticky-bar-inner{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.sticky-fecha{display:flex;align-items:center;gap:10px}
+.fecha-input{font-family:var(--mono)}
+.sticky-fecha-hint{font-size:12px;color:var(--muted)}
+.sticky-total{display:flex;align-items:baseline;gap:10px}
+.sticky-total-label{font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.sticky-total-value{font:600 22px var(--mono);color:var(--navy)}
+.fm-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+.fm-main{flex:999 1 600px;min-width:0;display:flex;flex-direction:column;gap:12px}
+.fm-side{flex:1 1 290px;min-width:0;display:flex;flex-direction:column;gap:12px;position:sticky;top:calc(var(--v3-top-alto,0px) + 70px)}
+.fm-side-body{padding:14px;display:flex;flex-direction:column;gap:10px}
+.fm-total{font:600 28px var(--mono);letter-spacing:-.02em;color:var(--navy)}
+.fm-stack{display:flex;gap:2px;height:12px;border-radius:3px;overflow:hidden}
+.fm-stack span{flex-basis:0;min-width:3px;border-radius:2px}
+.fm-line{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--text-2)}
+.fm-line span{display:flex;align-items:center;gap:8px}
+.fm-line i{width:8px;height:8px;border-radius:2px;flex:none}
+.fm-line b{font:600 13px var(--mono);color:var(--text)}
+.fm-line.sep{padding-top:10px;border-top:1px solid var(--line-2);color:var(--muted)}
+.fm-dist{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-2);font-size:13px}
+.fm-dist span{display:flex;flex-direction:column;gap:2px}
+.fm-dist small{font:400 11px var(--mono);color:var(--muted)}
+.fm-dist b{font:600 13px var(--mono);white-space:nowrap}
+.fm-dist.last{border-bottom:0;font-weight:600}
+.card > .table-card-head,.card > .card-title{padding:10px 14px;border-bottom:1px solid var(--line-2);margin:0}
+.table-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.table-card-title{display:flex;align-items:center;gap:8px;font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.table-card-title svg{color:var(--navy)}
+.table-card-actions{display:flex;gap:8px;align-items:center}
+.popover-addcol{position:absolute;top:calc(100% + 6px);right:0;z-index:120;width:260px;padding:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+.popover-addcol .field-wrap{margin-bottom:10px}
+.popover-addcol-actions{display:flex;justify-content:flex-end;gap:8px}
+.add-col-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:14px;border-bottom:1px solid var(--line-2)}
+.add-col-row .field-wrap{flex:1;min-width:160px}
+.letras-line{margin:0;border:0;border-top:1px solid var(--line-2);border-radius:0}
+table{min-width:420px}
+td{padding:7px 10px}
+.actions-row{display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between;align-items:center}
+.actions-row .btn{height:38px}
+.dist-monto{font-family:var(--mono)}
+@media(max-width:768px){.add-col-row{flex-direction:column}.sticky-bar{margin:12px 12px 0}.fm-side{position:static}}
+`
